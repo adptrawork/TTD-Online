@@ -1,0 +1,15 @@
+services:
+
+  signature:
+
+    build: .
+
+    container_name: signature-extractor
+
+    volumes:
+      - ./input:/app/input
+      - ./output:/app/output
+      - ./debug:/app/debug
+      - ./src:/app/src
+
+    restart: "no"

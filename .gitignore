@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Output & debug (hasil generated, tidak perlu di-commit)
+signature-extractor/output/
+signature-extractor/debug/
+
+# Input gambar — berisi data pribadi (tanda tangan), jangan di-commit
+signature-extractor/input/
+*.jpeg
+*.jpg
+
+# Credentials
+.env
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
