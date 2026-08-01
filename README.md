@@ -198,6 +198,14 @@ baru — QR versi hanya 2–3 (URL pendek), sangat mudah discan.
 
 **Fase 3 — URL permanen via subdomain (dipakai saat ini):**
 
+> 📄 Dokumentasi operasional lengkap (arsitektur, operasi harian, migrasi,
+> troubleshooting): **[`docs/VERIFIKASI-ONLINE.md`](docs/VERIFIKASI-ONLINE.md)**
+>
+> **Status saat ini (1 Agu 2026):** URL sementara **`http://dev.rsudkotajambi.id/v/t01`**
+> (subdomain `dev` dipakai sebagai alias sementara; QR 27 pegawai sudah berisi
+> URL ini). URL final direncanakan `ttd`/`rs.rsudkotajambi.id` — cukup buat
+> record di panel + ganti `server_name` + `./deploy.sh sync` (lihat §6 dokumen).
+
 ```
 HP scan QR → http://ttd.rsudkotajambi.id/v/t01
         │  DNS A: ttd → 103.147.236.138 (MikroTik publik)
