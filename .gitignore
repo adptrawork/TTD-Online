@@ -25,3 +25,6 @@ docs/*.xlsx
 # OS
 .DS_Store
 Thumbs.db
+
+# Sinkronisasi TTD → Morbis: hasil pipeline (data pegawai pribadi)
+scripts/ttd_sync/output/
