@@ -1,7 +1,8 @@
 """app.py - Verifier internal TTD (FastAPI).
 
-Serving data tanda tangan dari /data (output/ pipeline) untuk verifikasi
-internal organisasi. QR berisi URL pendek /v/<id>; halaman menampilkan
+Serving data tanda tangan dari /data untuk verifikasi internal organisasi.
+Data dibaca dari cache verifier_index.json (dibangun admin dari SQLite —
+source of truth). QR berisi URL pendek /v/<id>; halaman menampilkan
 nama + gambar TTD + status VALID.
 
 Endpoint:
@@ -20,7 +21,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 DATA = Path("/data")
-INDEX = DATA / "verifier_index.json"
+INDEX = DATA / "cache" / "verifier_index.json"
 
 app = FastAPI(title="TTD-OK Verifier", docs_url=None, redoc_url=None)
 
@@ -200,7 +201,7 @@ def page(title: str, body: str) -> str:
 
 def load_index() -> dict:
     if not INDEX.exists():
-        raise HTTPException(500, "verifier_index.json belum dibuat — jalankan src/publish_qr.py")
+        raise HTTPException(500, "verifier_index.json belum dibuat — jalankan admin (reindex)")
     return json.loads(INDEX.read_text(encoding="utf-8"))
 
 
@@ -211,11 +212,16 @@ def get_pegawai(payload_id: str) -> dict:
     return data[payload_id]
 
 
+def is_active(p: dict) -> bool:
+    return str(p.get("status", "active")).lower() == "active"
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     data = load_index()
+    active = {k: v for k, v in data.items() if is_active(v)}
     rows = []
-    for i, (k, v) in enumerate(sorted(data.items(), key=lambda kv: kv[1]["no"])):
+    for i, (k, v) in enumerate(sorted(active.items(), key=lambda kv: kv[1]["no"])):
         nama = v.get("nama_display") or v["nama"]
         gelar = v.get("gelar") or "pegawai"
         rows.append(
@@ -237,13 +243,13 @@ def index() -> str:
     <p>Daftar tanda tangan resmi yang dikelola unit TTD. Buka salah satu
     entri untuk melihat bukti verifikasi beserta citra tanda tangan.</p>
     <div class="stats">
-      <div class="stat"><div class="v">{len(data)}</div><div class="l">Pegawai</div></div>
-      <div class="stat"><div class="v">{"%.0f" % (len(data) and 100)}%</div><div class="l">Terdaftar</div></div>
+      <div class="stat"><div class="v">{len(active)}</div><div class="l">Pegawai</div></div>
+      <div class="stat"><div class="v">{"%.0f" % (100 if active else 0)}%</div><div class="l">Terdaftar</div></div>
     </div>
   </section>
   <section class="list">
     <div class="lhead"><span>Arsip</span><b>terverifikasi</b></div>
-    {''.join(rows)}
+    {''.join(rows) if rows else '<div class="lrow"><span class="lnm"><b>Tidak ada data aktif</b></div>'}
   </section>
 </div>
 </div>"""
@@ -255,6 +261,20 @@ def verifikasi(payload_id: str) -> str:
     p = get_pegawai(payload_id)
     nama = p.get("nama_display") or p["nama"]
     gelar = p.get("gelar") or ""
+    aktif = is_active(p)
+    status_html = (
+        '<span class="status"><span class="dot"></span>Valid</span>'
+        if aktif else
+        '<span class="status" style="background:rgba(220,38,38,.07);color:#b91c1c">'
+        '<span class="dot" style="background:#dc2626"></span>Tidak aktif</span>'
+    )
+    status_meta = "AKTIF &middot; terverifikasi" if aktif else "NONAKTIF &middot; dinonaktifkan"
+    sig_html = (f'<img src="{html.escape(payload_id)}/img" '
+                f'alt="Citra tanda tangan {html.escape(nama)}">') if aktif else (
+        f'<div style="color:var(--ink-3);font-size:.85rem;text-align:center;'
+        f'padding:2rem 0">Tanda tangan ini sedang dinonaktifkan dan tidak '
+        f'dipergunakan.</div>'
+    )
     body = f"""<div class="shell">
 <header class="brand" style="animation:rise .5s cubic-bezier(.16,1,.3,1) both">
   <span class="mark">{ICON_SHIELD}</span>
@@ -263,7 +283,7 @@ def verifikasi(payload_id: str) -> str:
 
 <main class="result">
   <div class="result-head">
-    <span class="status"><span class="dot"></span>Valid</span>
+    {status_html}
     <span class="no">#{p['no']:02d}</span>
   </div>
   <div class="person">
@@ -271,12 +291,12 @@ def verifikasi(payload_id: str) -> str:
     {f'<div class="gelar">{html.escape(gelar)}</div>' if gelar else ''}
   </div>
   <div class="sig">
-    <img src="{html.escape(payload_id)}/img" alt="Citra tanda tangan {html.escape(nama)}">
+    {sig_html}
     <span class="sig-label">Tanda tangan digital</span>
   </div>
   <div class="meta">
     <div class="meta-row" style="animation-delay:.2s"><span>Berkas arsip</span><b>{html.escape(str(p.get('png', '-'))) }</b></div>
-    <div class="meta-row" style="animation-delay:.25s"><span>Status</span><b>AKTIF &middot; terverifikasi</b></div>
+    <div class="meta-row" style="animation-delay:.25s"><span>Status</span><b>{status_meta}</b></div>
   </div>
 </main>
 </div>"""
@@ -301,6 +321,8 @@ berlaku. Periksa kembali QR / tautan yang digunakan.</p>
 @app.get("/v/{payload_id}/img")
 def ttd_img(payload_id: str) -> FileResponse:
     p = get_pegawai(payload_id)
+    if not is_active(p):
+        raise HTTPException(404, "tanda tangan tidak aktif")
     path = DATA / p["png"]
     if not path.exists():
         raise HTTPException(404, "gambar tanda tangan tidak ditemukan")
@@ -310,7 +332,9 @@ def ttd_img(payload_id: str) -> FileResponse:
 @app.get("/v/{payload_id}/json")
 def ttd_json(payload_id: str) -> JSONResponse:
     p = get_pegawai(payload_id)
-    return JSONResponse({k: v for k, v in p.items() if k != "png"})
+    if not is_active(p):
+        raise HTTPException(404, "tanda tangan tidak aktif")
+    return JSONResponse({k: v for k, v in p.items() if k not in ("png", "original")})
 
 
 @app.get("/healthz")
