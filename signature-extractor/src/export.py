@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -86,3 +86,34 @@ def write_summary(rows: List[Dict]) -> Path:
         )
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def collect_unique(output_dir: Path = OUTPUT_DIR) -> Tuple[Path, Path]:
+    """Kumpulkan semua PNG hasil ke folder terpusat dengan nama unik.
+
+        output/signatures/signature_Ali_Akbar_S_Kep.png
+        output/profiles/profile_Ali_Akbar_S_Kep.png
+
+    Nama file = signature_/profile_ + nama orang (prefix nomor dilepas).
+    Berguna saat semua file dikumpulkan ke satu tempat (tempel ke Word/dokumen)
+    tanpa tabrakan nama. Mengembalikan (sig_dir, pro_dir).
+    """
+    import re
+    import shutil
+
+    sig_dir = output_dir / "signatures"
+    pro_dir = output_dir / "profiles"
+    sig_dir.mkdir(exist_ok=True)
+    pro_dir.mkdir(exist_ok=True)
+
+    for folder in sorted(p for p in output_dir.iterdir() if p.is_dir()):
+        if folder in (sig_dir, pro_dir):
+            continue
+        # lepas prefix nomor: "01_Ali_Akbar_S_Kep" -> "Ali_Akbar_S_Kep"
+        nama = re.sub(r"^\d+_", "", folder.name)
+        for sub, ext, dst in (("signature", "signature", sig_dir),
+                              ("profile", "profile", pro_dir)):
+            src = folder / f"{sub}.png"
+            if src.exists():
+                shutil.copy2(src, dst / f"{ext}_{nama}.png")
+    return sig_dir, pro_dir

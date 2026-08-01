@@ -49,6 +49,8 @@ output/
 - ✅ **PNG transparan (RGBA)** — background dihapus, tinta dipertahankan, tepi di-feather
 - ✅ **Tahan terhadap scan berbayang** — threshold adaptif berbasis median background per-cell (bukan putih murni)
 - ✅ **OCR nama bahasa Indonesia** (`tesseract-ocr-ind`), upscale 3× untuk akurasi
+- ✅ **QR Code verifikasi** — tiap TTD di-encode jadi QR berisi gambar TTD + nama (bisa discan kamera HP)
+- ✅ **Viewer scan offline** (`scan_ttd.html`) — kamera/jsQR atau tempel teks hasil scan
 - ✅ **Reusable** — cukup taruh gambar baru di `input/`, jalankan ulang
 
 ---
@@ -73,6 +75,8 @@ signature-extractor/
     ├── crop_cells.py        # pemotongan cell + bounding box tinta
     ├── extract_signature.py # konversi ke PNG transparan (RGBA)
     ├── ocr_name.py          # OCR nama + parsing gelar + slug nama folder
+    ├── qr_export.py         # encode TTD -> QR Code (payload T1)
+    ├── scan_ttd.html        # viewer scan offline (jsQR)
     └── export.py            # penulisan output & ringkasan CSV
 ```
 
@@ -100,9 +104,51 @@ output/
 │   ├── signature.png      # tempel ke Word / surat
 │   ├── profile.png        # nama + ttd utk verifikasi cepat
 │   └── metadata.json
+├── signatures/            # signature_<nama>.png (satu per pegawai)
+├── profiles/              # profile_<nama>.png
+├── qrcodes/               # qr_<nama>.png (QR berisi TTD)
+├── scan_ttd.html          # viewer scan QR (buka di browser)
 ├── ...
 └── ringkasan.csv          # daftar semua pegawai + status
 ```
+
+---
+
+## Verifikasi Tanda Tangan via QR Code
+
+Setiap TTD yang berhasil diekstrak otomatis di-encode menjadi **QR Code** yang
+menyimpan **gambar tanda tangan** + **nama pemilik**, sehingga bisa diverifikasi
+dengan scan kamera HP (offline, tanpa server).
+
+```
+output/qrcodes/qr_Ali_Akbar_S_Kep.png
+        │
+        ▼  scan (kamera HP / jsQR)
+┌───────────────────────┐
+│  T1 + base64(payload) │   ← semua ASCII printable (aman semua scanner)
+│  payload = TTD1 │     │
+│  nama │ PNG 1-bit     │
+└───────────────────────┘
+        ▼
+  gambar TTD + nama ditampilkan
+```
+
+**Cara pakai:**
+
+1. Buka `output/scan_ttd.html` di browser (dari `localhost` / file server —
+   kamera butuh izin, idealnya HTTPS).
+2. Klik **Mulai Kamera**, arahkan ke QR, atau
+3. Tempel teks hasil scan QR (diawali `T1...`) di kolom bawah.
+
+**Format payload** (`qr_export.py`):
+
+```
+payload_bytes = "TTD1" + len(nama):1 + nama_utf8 + png_biner(1-bit)
+payload_qr    = "T1" + base64(payload_bytes)
+```
+
+TTD di-threshold ke biner 1-bit (tinta hitam di kertas putih) sehingga ukuran
+PNG turun 30–50× → versi QR 16–25 (mudah discan HP) dengan resolusi TTD penuh.
 
 ### Format metadata.json
 

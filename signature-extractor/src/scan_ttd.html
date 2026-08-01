@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scan TTD — Verifikasi Tanda Tangan</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+  .container { max-width: 480px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.3rem; text-align: center; margin: 12px 0; color: #38bdf8; }
+  .card { background: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  #video-wrap { position: relative; border-radius: 10px; overflow: hidden; background: #000; }
+  video { width: 100%; display: block; }
+  #scanline { position: absolute; left: 0; right: 0; height: 2px; background: #38bdf8; box-shadow: 0 0 12px #38bdf8; animation: scan 2s linear infinite; }
+  @keyframes scan { 0% { top: 0; } 100% { top: calc(100% - 2px); } }
+  .btn { display: inline-block; padding: 10px 16px; border: 0; border-radius: 8px; font-size: .95rem; cursor: pointer; margin: 4px 4px 0 0; }
+  .btn-primary { background: #38bdf8; color: #0f172a; font-weight: 600; }
+  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-secondary { background: #334155; color: #e2e8f0; }
+  #result { display: none; text-align: center; }
+  #result.show { display: block; }
+  #ttd-img { max-width: 100%; max-height: 220px; margin: 12px auto; display: block; background: repeating-conic-gradient(#fff 0% 25%, #e2e8f0 0% 50%) 0 0/16px 16px; border-radius: 8px; }
+  #nama { font-size: 1.1rem; font-weight: 700; color: #f8fafc; }
+  #status { color: #94a3b8; font-size: .85rem; margin-top: 6px; }
+  #log { font-family: monospace; font-size: .75rem; color: #64748b; margin-top: 8px; word-break: break-all; max-height: 90px; overflow: auto; }
+  textarea { width: 100%; min-height: 60px; background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 8px; padding: 8px; font-size: .8rem; margin-top: 8px; }
+  .footer { text-align: center; color: #475569; font-size: .75rem; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📷 Scan TTD</h1>
+
+  <div class="card">
+    <div id="video-wrap">
+      <video id="video" playsinline muted></video>
+      <div id="scanline"></div>
+    </div>
+    <div style="margin-top:10px">
+      <button class="btn btn-primary" id="btn-start">Mulai Kamera</button>
+      <button class="btn btn-danger" id="btn-stop" disabled>Berhenti</button>
+    </div>
+    <div id="status">Arahkan kamera ke QR Code tanda tangan…</div>
+  </div>
+
+  <div class="card" id="result">
+    <div id="nama">—</div>
+    <img id="ttd-img" alt="Tanda tangan">
+    <div id="meta"></div>
+    <button class="btn btn-secondary" id="btn-again">Scan Lagi</button>
+  </div>
+
+  <div class="card">
+    <div style="font-size:.85rem">Atau tempel teks hasil scan di sini:</div>
+    <textarea id="paste" placeholder="T1... (teks hasil scan QR)"></textarea>
+    <button class="btn btn-primary" id="btn-paste">Tampilkan</button>
+    <div id="log"></div>
+  </div>
+
+  <div class="footer">TTD-OK · QR berisi gambar tanda tangan · verifikasi offline</div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+const video = document.getElementById('video');
+const btnStart = document.getElementById('btn-start');
+const btnStop = document.getElementById('btn-stop');
+const statusEl = document.getElementById('status');
+const resultCard = document.getElementById('result');
+const ttdImg = document.getElementById('ttd-img');
+const namaEl = document.getElementById('nama');
+const metaEl = document.getElementById('meta');
+const logEl = document.getElementById('log');
+
+let stream = null, raf = null, lastDetect = 0;
+
+function log(msg) { logEl.textContent = msg; console.log(msg); }
+
+// ---- Parse payload T1 (ASCII printable, anti-corruption) ----
+function parsePayload(data) {
+  if (typeof data !== 'string' || !data.startsWith('T1')) return null;
+  let raw;
+  try { raw = atob(data.slice(2)); } catch (e) { return null; }
+  const bytes = Uint8Array.from(raw, c => c.charCodeAt(0));
+  if (bytes.length < 5) return null;
+  if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== 'TTD1') return null;
+  const nlen = bytes[4];
+  const nama = new TextDecoder().decode(bytes.slice(5, 5 + nlen));
+  const pngBytes = bytes.slice(5 + nlen);
+  if (pngBytes.length === 0) return null;
+  let b64 = '';
+  for (let i = 0; i < pngBytes.length; i += 0x8000) {
+    b64 += btoa(String.fromCharCode.apply(null, pngBytes.subarray(i, i + 0x8000)));
+  }
+  return { nama, b64 };
+}
+
+function showResult(payload) {
+  if (payload) {
+    ttdImg.src = 'data:image/png;base64,' + payload.b64;
+    namaEl.textContent = payload.nama || '(tanpa nama)';
+    resultCard.classList.add('show');
+    stopCamera();
+  }
+}
+
+// ---- Scan loop ----
+function tick() {
+  raf = requestAnimationFrame(tick);
+  if (!video.readyState || video.videoWidth === 0) return;
+  if (performance.now() - lastDetect < 250) return;
+  lastDetect = performance.now();
+
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const code = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+  if (code && code.data) {
+    log('QR terdeteksi, panjang data: ' + code.data.length);
+    const payload = parsePayload(code.data);
+    if (payload) { showResult(payload); statusEl.textContent = '✅ Ditemukan!'; }
+  }
+}
+
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    video.srcObject = stream;
+    await video.play();
+    btnStart.disabled = true;
+    btnStop.disabled = false;
+    statusEl.textContent = 'Arahkan kamera ke QR Code…';
+    tick();
+  } catch (e) {
+    statusEl.textContent = 'Kamera tidak bisa dibuka: ' + e.message + ' (butuh HTTPS / izin kamera)';
+  }
+}
+
+function stopCamera() {
+  if (raf) cancelAnimationFrame(raf);
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  btnStart.disabled = false;
+  btnStop.disabled = true;
+}
+
+btnStart.onclick = startCamera;
+btnStop.onclick = stopCamera;
+document.getElementById('btn-again').onclick = () => { resultCard.classList.remove('show'); startCamera(); };
+document.getElementById('btn-paste').onclick = () => {
+  const payload = parsePayload(document.getElementById('paste').value.trim());
+  if (payload) showResult(payload); else statusEl.textContent = 'Format payload tidak dikenali (harus diawali T1)';
+};
+</script>
+</body>
+</html>

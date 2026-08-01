@@ -22,7 +22,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from detect_table import GridInfo, detect_grid, summarize          # noqa: E402
 from crop_cells import crop_ink                                    # noqa: E402
 from extract_signature import save_rgba, signature_to_rgba         # noqa: E402
-from export import export_pegawai, save_debug, write_summary       # noqa: E402
+from export import (export_pegawai, save_debug, write_summary,  # noqa: E402
+                    collect_unique)
+from qr_export import generate_all                              # noqa: E402
+import shutil                                                   # noqa: E402
 from ocr_name import extract_pegawai                     # noqa: E402
 
 INPUT_DIR = Path("/app/input")
@@ -107,9 +110,20 @@ def main() -> None:
             print(f"[ERROR] Gagal memproses {img.name}: {exc}")
 
     write_summary(all_rows)
+    sig_dir, pro_dir = collect_unique()
     ok = sum(1 for r in all_rows if r["status"] == "OK")
     print(f"\nSelesai: {len(all_rows)} pegawai diproses ({ok} OK). "
           f"Ringkasan: {OUTPUT_DIR / 'ringkasan.csv'}")
+    print(f"File unik: {sig_dir.name}/ ({len(list(sig_dir.glob('*.png')))}), "
+          f"{pro_dir.name}/ ({len(list(pro_dir.glob('*.png')))})")
+
+    # QR Code berisi gambar TTD + viewer utk scan
+    qr_dir, qr_rows = generate_all(OUTPUT_DIR)
+    viewer = Path(__file__).parent / "scan_ttd.html"
+    if viewer.exists():
+        shutil.copy2(viewer, OUTPUT_DIR / "scan_ttd.html")
+    n_ok = sum(1 for r in qr_rows if r["status"] == "ok")
+    print(f"QR Code: {qr_dir.name}/ ({n_ok} dari {len(qr_rows)} TTD) + viewer scan_ttd.html")
     for r in all_rows:
         if r["status"] != "OK":
             print(f"  perlu perhatian: {r['no']:02d} {r['nama'] or ''} -> {r['status']}")
