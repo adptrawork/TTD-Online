@@ -187,12 +187,37 @@ docker compose up -d verifier
 
 | Jalur | Cara | Cocok untuk |
 |---|---|---|
+| **Server terpisah** ✅ (paling bersih) | Deploy verifier di server Linux + Docker; mesin lokal cukup kirim data via `deploy.sh` | Punya server sendiri, TTD di server internal |
 | **LAN kantor** (paling cepat) | `VERIFY_BASE_URL="http://<ip-lan>:8123" python src/publish_qr.py`; HP di WiFi kantor scan langsung | Kantor dengan WiFi sendiri |
 | **Cloudflare Tunnel** | `cloudflared tunnel --url http://localhost:8123` → URL `https://xxx.trycloudflare.com`; permanen butuh domain + [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) (auth email, 50 user gratis) | Akses dari mana saja, terkunci |
 | **Tailscale Funnel** | Install Tailscale; `tailscale funnel 8123` → `https://<machine>.ts.net`; hanya perangkat di tailnet | Tim kecil, semua perangkat di-manage |
 
 Setelah URL final didapat, regenerate QR sekali lagi dengan `VERIFY_BASE_URL`
-baru — QR versi hanya 3–4 (URL pendek), sangat mudah discan.
+baru — QR versi hanya 2–3 (URL pendek), sangat mudah discan.
+
+### Deploy ke server terpisah (Linux + SSH + Docker)
+
+Server terpisah = host verifier; mesin lokal tetap untuk ekstraksi & kirim data.
+
+```bash
+cd signature-extractor
+
+# 1. Pasang backend di server (kirim image via docker save/load + jalankan container)
+TTD_SERVER='user@203.0.113.5' ./deploy.sh setup
+
+# 2. Cek akses publik server (dari mana saja):
+curl http://203.0.113.5:8123/healthz     # -> {"status":"ok"}
+
+# 3. Generate QR berisi URL server + kirim data pegawai:
+VERIFY_BASE_URL='http://203.0.113.5:8123' TTD_SERVER='user@203.0.113.5' ./deploy.sh sync
+
+# (pertama kali bisa langsung: TTD_SERVER=... VERIFY_BASE_URL=... ./deploy.sh full)
+```
+
+Yang dikirim hanya yang dibutuhkan verifier: folder pegawai (`signature.png`)
++ `verifier_index.json` (dibuat `publish_qr.py`). Verifier membaca data
+per-request → **update data tidak perlu restart server**. Saat ada dokumen
+baru: jalankan pipeline → `./deploy.sh sync`.
 
 ### Format metadata.json
 
