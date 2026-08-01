@@ -30,8 +30,11 @@ from __future__ import annotations
 
 import io
 import json
+import logging
+import logging.handlers
 import os
 import re
+import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -50,7 +53,51 @@ from db import (_lock, build_cache, connect, create_signature, ensure_folders,
 PUBLIC_BASE_URL = os.environ.get(
     "PUBLIC_BASE_URL", "http://dev.rsudkotajambi.id/ttd").rstrip("/")
 
+LOGS_DIR = Path(os.environ.get("LOGS_DIR", "/data/logs"))
+
 app = FastAPI(title="Signature Management Service", docs_url=None, redoc_url=None)
+
+# --------------------------------------------------------------------------
+# logging
+# --------------------------------------------------------------------------
+# Log ditulis ke dua tempat:
+#   * stdout  -> terlihat via `docker logs ttd-admin`
+#   * file    -> /data/logs/admin.log (rotating 2MB x 5), tetap ada walau
+#                container restart; bisa dibaca langsung di server maupun
+#                lewat halaman admin (GET /api/logs).
+
+_log_configured = False
+
+
+def setup_logging() -> None:
+    global _log_configured
+    if _log_configured:
+        return
+    _log_configured = True
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S")
+
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    sh = logging.StreamHandler()
+    sh.setFormatter(fmt)
+    root.addHandler(sh)
+
+    try:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        fh = logging.handlers.RotatingFileHandler(
+            LOGS_DIR / "admin.log", maxBytes=2_000_000, backupCount=5,
+            encoding="utf-8")
+        fh.setFormatter(fmt)
+        root.addHandler(fh)
+    except OSError as exc:  # direktori tidak writable -> tetap jalan via stdout
+        root.warning("tidak dapat membuka file log (%s) — hanya stdout", exc)
+
+
+setup_logging()
+log = logging.getLogger("admin")
 
 
 # --------------------------------------------------------------------------
@@ -246,6 +293,15 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
   <table><thead><tr><th>Waktu</th><th>Aksi</th><th>Target</th><th>Detail</th></tr></thead>
   <tbody id="auditBody"></tbody></table>
 </div>
+
+<div class="card">
+  <h2>Log sistem</h2>
+  <p class="desc">Baris terakhir dari <span style="font-family:var(--mono);font-size:.75rem">/data/logs/admin.log</span> — untuk memantau error.
+  File lengkap juga bisa dibaca di server: <span style="font-family:var(--mono);font-size:.75rem">docker logs ttd-admin</span>.</p>
+  <pre id="logBox" style="background:#0f172a;color:#cbd5e1;font-family:var(--mono);font-size:.7rem;
+    padding:1rem;border-radius:1rem;overflow:auto;max-height:20rem;line-height:1.55;
+    white-space:pre-wrap;word-break:break-word"></pre>
+</div>
 </div>
 
 <script>
@@ -371,7 +427,20 @@ async function loadAudit() {
     <td style="color:var(--ink2);font-size:.8rem">${esc(a.detail)}</td></tr>`).join("");
 }
 
-addRow(); loadList(); loadAudit();
+async function loadLogs() {
+  const box = document.getElementById("logBox");
+  try {
+    const r = await fetch(BASE + "/api/logs?lines=150");
+    const d = await r.json();
+    box.textContent = d.logs && d.logs.length
+      ? d.logs.join("\n") : "(belum ada log)";
+  } catch (e) {
+    box.textContent = "gagal memuat log: " + e;
+  }
+}
+
+addRow(); loadList(); loadAudit(); loadLogs();
+setInterval(loadLogs, 15000);
 </script>
 </body></html>"""
 
@@ -452,10 +521,17 @@ async def api_upload(nama: list[str] = Form(...),
             results.append({"ok": True, "nama": n, "pid": pid, "version": 1,
                             "w": w, "h": h,
                             "url": f"{PUBLIC_BASE_URL}/v/{pid}"})
+            log.info("CREATE %s | %s | %dx%d | src=%s",
+                     pid, n, w, h, orig_name)
         except Exception as exc:
+            log.error("CREATE GAGAL | nama=%s | %s\n%s",
+                      n if 'n' in dir() else "-", exc,
+                      traceback.format_exc())
             results.append({"ok": False, "nama": n if 'n' in dir() else "",
                             "error": str(exc)})
     ok_count = sum(1 for r in results if r["ok"])
+    log.info("UPLOAD selesai: %d ok / %d gagal dari %d", ok_count,
+             len(results) - ok_count, len(results))
     return {"total": len(results), "ok": ok_count,
             "failed": len(results) - ok_count, "results": results}
 
@@ -511,11 +587,14 @@ async def api_update(pid: str, file: UploadFile = File(...)) -> dict:
         write_full_metadata(pid)
         build_cache()
         w, h = png_size(png)
+        log.info("UPDATE %s -> v%d | %s | %dx%d | src=%s",
+                 pid, new_ver, row["name"], w, h, orig_name)
         return {"ok": True, "pid": pid, "version": new_ver, "w": w, "h": h,
                 "url": f"{PUBLIC_BASE_URL}/v/{pid}"}
     except HTTPException:
         raise
     except Exception as exc:
+        log.error("UPDATE GAGAL %s | %s\n%s", pid, exc, traceback.format_exc())
         return {"ok": False, "error": str(exc)}
 
 
@@ -526,6 +605,7 @@ def api_deactivate(pid: str) -> dict:
         raise HTTPException(404, "pid tidak ditemukan")
     build_cache()
     write_metadata(pid)
+    log.info("DEACTIVATE %s | %s", pid, row["name"])
     return {"ok": True, "pid": pid, "status": row["status"]}
 
 
@@ -536,6 +616,7 @@ def api_activate(pid: str) -> dict:
         raise HTTPException(404, "pid tidak ditemukan")
     build_cache()
     write_metadata(pid)
+    log.info("ACTIVATE %s | %s", pid, row["name"])
     return {"ok": True, "pid": pid, "status": row["status"]}
 
 
@@ -588,7 +669,23 @@ def api_audit(limit: int = 200) -> list:
 @app.post("/api/reindex")
 def api_reindex() -> dict:
     cache = build_cache()
+    log.info("REINDEX cache -> %s", cache)
     return {"ok": True, "cache": str(cache)}
+
+
+@app.get("/api/logs")
+def api_logs(lines: int = 200) -> dict:
+    """Baca N baris terakhir file log admin (untuk viewer di halaman)."""
+    log_file = LOGS_DIR / "admin.log"
+    if not log_file.exists():
+        return {"path": str(log_file), "logs": []}
+    try:
+        content = log_file.read_text(encoding="utf-8", errors="replace")
+        tail = content.splitlines()[-int(lines):]
+        return {"path": str(log_file), "logs": tail}
+    except OSError as exc:
+        log.error("gagal baca log file: %s", exc)
+        return {"path": str(log_file), "error": str(exc), "logs": []}
 
 
 @app.get("/healthz")

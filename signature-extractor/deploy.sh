@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # deploy.sh — Deploy verifier TTD-OK ke server terpisah (Linux + SSH + Docker).
 #
-# Alur: image verifier dikirim via `docker save|load`, container dijalankan di
-# server, lalu data pegawai + verifier_index.json di-sync (rsync) dari mesin
-# lokal. Verifier membaca data per-request -> update data tidak perlu restart.
+# CATATAN: sejak migrasi ke Signature Management Service, sistem TTD live di
+# server berada di dalam folder projects (satu folder dgn halo-manap):
+#     ~/projects/halo-manap/ttd/{admin,verifier,data,deploy.sh,...}
+# Data:  ~/projects/halo-manap/ttd/data   (mount container sbg /data)
+# Image dikirim via `docker save|load` lalu container dijalankan manual:
+#     ttd-admin    : rw mount, di belakang nginx /ttd-admin/ (Basic Auth)
+#     ttd-verifier : ro mount, di belakang nginx /ttd/ (publik)
+# Script ini hanya utk rujukan/pipeline lama; update utama cukup dengan
+# membangun ulang image + docker save|load + recreate container.
 #
 # Variabel (bisa via env):
 #   TTD_SERVER        alamat SSH server, mis. "user@203.0.113.5"
-#   TTD_DIR           direktori data di server (default /opt/ttd)
-#   VERIFY_BASE_URL   URL publik verifier, mis. "http://203.0.113.5:8123"
-#                     atau "https://ttd.kantor.id" (wajib utk perintah sync)
+#   TTD_DIR           direktori data di server (default ~/projects/halo-manap/ttd/data)
+#   VERIFY_BASE_URL   URL publik verifier, mis. "https://ttd.rsudkotajambi.id"
 #
 # Pemakaian:
 #   TTD_SERVER='user@ip' ./deploy.sh setup
@@ -24,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 SERVER="${TTD_SERVER:-}"
-TTD_DIR="${TTD_DIR:-/opt/ttd}"
+TTD_DIR="${TTD_DIR:-$HOME/projects/halo-manap/ttd/data}"
 BASE_URL="${VERIFY_BASE_URL:-}"
 IMG="signature-extractor-verifier"
 IMAGE_LOCAL="signature-extractor-verifier"

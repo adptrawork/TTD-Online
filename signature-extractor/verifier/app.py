@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import html
 import json
+import logging
+import traceback
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -24,6 +26,30 @@ DATA = Path("/data")
 INDEX = DATA / "cache" / "verifier_index.json"
 
 app = FastAPI(title="TTD-OK Verifier", docs_url=None, redoc_url=None)
+
+# --------------------------------------------------------------------------
+# logging — stdout (terlihat via `docker logs ttd-verifier`) + file
+# /data/logs/verifier.log bila /data writable (verifier di-mount :ro, jadi
+# biasanya hanya stdout).
+# --------------------------------------------------------------------------
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S")
+log = logging.getLogger("verifier")
+
+try:
+    _log_dir = DATA / "logs"
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _fh = logging.FileHandler(_log_dir / "verifier.log", encoding="utf-8")
+    _fh.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"))
+    logging.getLogger().addHandler(_fh)
+    log.info("file log: %s", _log_dir / "verifier.log")
+except OSError as exc:
+    log.warning("tidak dapat menulis /data/logs (%s) — hanya stdout", exc)
 
 TITLE = "Verifikasi Tanda Tangan"
 
@@ -220,6 +246,7 @@ def is_active(p: dict) -> bool:
 def index() -> str:
     data = load_index()
     active = {k: v for k, v in data.items() if is_active(v)}
+    log.info("INDEX | %d total, %d aktif", len(data), len(active))
     rows = []
     for i, (k, v) in enumerate(sorted(active.items(), key=lambda kv: kv[1]["no"])):
         nama = v.get("nama_display") or v["nama"]
@@ -262,6 +289,8 @@ def verifikasi(payload_id: str) -> str:
     nama = p.get("nama_display") or p["nama"]
     gelar = p.get("gelar") or ""
     aktif = is_active(p)
+    log.info("VERIFIKASI %s | %s | %s", payload_id, nama,
+             "aktif" if aktif else "NONAKTIF")
     status_html = (
         '<span class="status"><span class="dot"></span>Valid</span>'
         if aktif else
@@ -306,15 +335,18 @@ def verifikasi(payload_id: str) -> str:
 @app.exception_handler(HTTPException)
 async def http_exc_handler(request: Request, exc: HTTPException) -> HTMLResponse | JSONResponse:
     if exc.status_code == 404 and request.url.path.startswith("/v/"):
+        pid = request.path_params.get('payload_id', '-')
+        log.warning("404 %s | id=%s", request.url.path, pid)
         body = f"""<div class="shell"><main class="err"><div class="err-inner">
 <div class="mark">{ICON_CIRCLE_X}</div>
 <h1>Tanda tangan tidak ditemukan</h1>
-<p>ID <code>{html.escape(request.path_params.get('payload_id', '-'))}</code>
+<p>ID <code>{html.escape(pid)}</code>
 tidak terdaftar di arsip verifikasi, atau tautan yang dipindai sudah tidak
 berlaku. Periksa kembali QR / tautan yang digunakan.</p>
 <a class="btn" href="..">{ICON_BACK} Kembali ke direktori</a>
 </div></main></div>"""
         return HTMLResponse(page(f"Tidak ditemukan — {TITLE}", body), status_code=404)
+    log.info("HTTP %d %s", exc.status_code, request.url.path)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
 
 
@@ -322,9 +354,11 @@ berlaku. Periksa kembali QR / tautan yang digunakan.</p>
 def ttd_img(payload_id: str) -> FileResponse:
     p = get_pegawai(payload_id)
     if not is_active(p):
+        log.warning("IMG %s ditolak (nonaktif)", payload_id)
         raise HTTPException(404, "tanda tangan tidak aktif")
     path = DATA / p["png"]
     if not path.exists():
+        log.error("IMG %s file hilang: %s", payload_id, path)
         raise HTTPException(404, "gambar tanda tangan tidak ditemukan")
     return FileResponse(path, media_type="image/png")
 
@@ -333,6 +367,7 @@ def ttd_img(payload_id: str) -> FileResponse:
 def ttd_json(payload_id: str) -> JSONResponse:
     p = get_pegawai(payload_id)
     if not is_active(p):
+        log.warning("JSON %s ditolak (nonaktif)", payload_id)
         raise HTTPException(404, "tanda tangan tidak aktif")
     return JSONResponse({k: v for k, v in p.items() if k not in ("png", "original")})
 
