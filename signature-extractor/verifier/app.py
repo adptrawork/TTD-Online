@@ -219,7 +219,7 @@ def index() -> str:
         nama = v.get("nama_display") or v["nama"]
         gelar = v.get("gelar") or "pegawai"
         rows.append(
-            f'<a class="lrow" style="animation-delay:{i * 45}ms" href="/v/{html.escape(k)}">'
+            f'<a class="lrow" style="animation-delay:{i * 45}ms" href="v/{html.escape(k)}">'
             f'<span class="ln">#{v["no"]:02d}</span>'
             f'<span class="lnm"><b>{html.escape(nama)}</b>'
             f'<small>{html.escape(gelar)}</small></span>'
@@ -292,7 +292,7 @@ async def http_exc_handler(request: Request, exc: HTTPException) -> HTMLResponse
 <p>ID <code>{html.escape(request.path_params.get('payload_id', '-'))}</code>
 tidak terdaftar di arsip verifikasi, atau tautan yang dipindai sudah tidak
 berlaku. Periksa kembali QR / tautan yang digunakan.</p>
-<a class="btn" href="/">{ICON_BACK} Kembali ke direktori</a>
+<a class="btn" href="..">{ICON_BACK} Kembali ke direktori</a>
 </div></main></div>"""
         return HTMLResponse(page(f"Tidak ditemukan — {TITLE}", body), status_code=404)
     return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
