@@ -201,11 +201,11 @@ baru — QR versi hanya 2–3 (URL pendek), sangat mudah discan.
 > 📄 Dokumentasi operasional lengkap (arsitektur, operasi harian, migrasi,
 > troubleshooting): **[`docs/VERIFIKASI-ONLINE.md`](docs/VERIFIKASI-ONLINE.md)**
 >
-> **Status saat ini (1 Agu 2026):** URL aktif **`http://dev.rsudkotajambi.id/v/t01`**
-> (subdomain DNS `dev` yang sudah ada — tanpa perlu ubah panel). QR 27 pegawai
-> sudah berisi URL ini. Cadangan (opsional): Tailscale Funnel
-> `https://minipacs-ttd.tail8394aa.ts.net/ttd`. Opsi final: subdomain `ttd`/`rs`
-> (lihat §6 dokumen).
+> **Status saat ini (1 Agu 2026):** URL aktif **`http://dev.rsudkotajambi.id/ttd/v/t01`**.
+> `dev.rsudkotajambi.id` menjadi **portal internal RSUD** (panel) dengan multi-proyek
+> path-based: `/` → portal, `/ttd/` → verifikasi TTD, `/halo-manap/` & `/projek-3/`
+> → placeholder. QR 27 pegawai berisi `http://dev.rsudkotajambi.id/ttd/v/tXX`.
+> Cadangan: Tailscale Funnel `https://minipacs-ttd.tail8394aa.ts.net/ttd`.
 
 ```
 HP scan QR → http://ttd.rsudkotajambi.id/v/t01

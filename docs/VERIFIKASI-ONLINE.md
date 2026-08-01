@@ -1,18 +1,25 @@
 # Verifikasi Online TTD — Dokumentasi Deploy & Operasi
 
 > **Status: AKTIF** — 1 Agu 2026
-> Jalur utama: **`http://dev.rsudkotajambi.id/v/t01`** (subdomain DNS yang sudah
-> ada — tanpa perlu mengubah konfigurasi panel). Cadangan (opsional): Tailscale
-> Funnel `https://minipacs-ttd.tail8394aa.ts.net/ttd` (HTTPS, tanpa panel).
+> Jalur utama: **`http://dev.rsudkotajambi.id/ttd/v/t01`** — `dev` menjadi **portal
+> internal RSUD** (multi-proyek path-based). Cadangan (opsional): Tailscale Funnel
+> `https://minipacs-ttd.tail8394aa.ts.net/ttd` (HTTPS, tanpa panel).
 
 ---
 
 ## 1. Ringkasan
 
-Verifikasi tanda tangan (TTD) pegawai secara **online** berjalan lewat:
+Verifikasi tanda tangan (TTD) pegawai secara **online** berjalan lewat **portal
+`dev.rsudkotajambi.id`** (multi-proyek dalam satu subdomain):
 
-1. **Subdomain `dev`** (utama) — HTTP, memakai record DNS `dev` yang sudah ada.
-2. **Tailscale Funnel** (cadangan opsional) — HTTPS otomatis via `*.ts.net`.
+```
+http://dev.rsudkotajambi.id/            → portal internal RSUD (panel)
+http://dev.rsudkotajambi.id/ttd         → verifikasi TTD
+http://dev.rsudkotajambi.id/halo-manap  → proyek halomanap (placeholder)
+http://dev.rsudkotajambi.id/projek-3    → proyek berikutnya (placeholder)
+```
+
+Cadangan: **Tailscale Funnel** (HTTPS) `https://minipacs-ttd.tail8394aa.ts.net/ttd`.
 
 - **27 pegawai** sudah masuk `verifier_index.json`, QR berisi URL pendek `/v/<id>`.
 - Verifier = FastAPI kecil di server Docker, data dibaca per-request (update data
@@ -23,13 +30,18 @@ Verifikasi tanda tangan (TTD) pegawai secara **online** berjalan lewat:
 
 ## 2. Arsitektur (jalur aktif)
 
-### Jalur A — Subdomain DNS (utama, `dev`)
+### Jalur A — Portal `dev` (utama, multi-proyek path-based)
 
 ```
-HP scan QR ──► http://dev.rsudkotajambi.id/v/t01
+HP scan QR ──► http://dev.rsudkotajambi.id/ttd/v/t01
         │  DNS Rumahweb: A  dev → 103.147.236.138
         ▼
-MikroTik NAT :80 → 192.168.2.220:8080 → nginx → ttd.conf (server_name dev) → verifier
+MikroTik NAT :80 → 192.168.2.220:8080 → nginx
+        ▼
+conf.d/dev.conf (server_name dev.rsudkotajambi.id)
+   /          → portal statis (devpanel/)
+   /ttd/      → proxy ttd-verifier:8000   ← verifikasi TTD
+   /halo-manap/, /projek-3/ → placeholder
 ```
 
 ### Jalur B — Tailscale Funnel (cadangan opsional, HTTPS, tanpa panel DNS)
@@ -62,8 +74,9 @@ verifier (FastAPI) → data /home/mini_pacs/ttd → halaman ✓ VALID + TTD
 | Verifier container | `ttd-verifier` — image `signature-extractor-verifier`, port `0.0.0.0:8123→8000`, mount `/home/mini_pacs/ttd:/data:ro` |
 | Network | `halo-manap_default` (join manual: `docker network connect halo-manap_default ttd-verifier`) |
 | Nginx proxy | container `halomanap-nginx` — mount folder `~/projects/halo-manap/docker/nginx/conf.d/` → `/etc/nginx/conf.d` |
-| Routing path | `conf.d/default.conf` — `location /ttd/` → `ttd-verifier:8000` (pola multi-proyek) |
-| Routing subdomain | `conf.d/ttd.conf` — `server_name ttd.rsudkotajambi.id dev.rsudkotajambi.id` → verifier |
+| Routing path | `conf.d/default.conf` — `location /ttd/` → `ttd-verifier:8000` (funnel & default server) |
+| Portal `dev` | `conf.d/dev.conf` — `server_name dev.rsudkotajambi.id`: `/` → panel `devpanel/`, `/ttd/` → verifier, `/halo-manap/` & `/projek-3/` → placeholder |
+| Routing subdomain | `conf.d/ttd.conf` — `server_name ttd.rsudkotajambi.id` → verifier (belum ada DNS `ttd`) |
 | Tailscale Funnel | container `tailscale` (`--network host`), node `minipacs-ttd`, serve `8080` via :443 |
 | Bind port halomanap | host `80→8080`, `8443→443` (443 host dikosongkan untuk Funnel) |
 | Data verifier | `/home/mini_pacs/ttd/` (rsync dari `output/`, exclude signatures/profiles/qrcodes) |
@@ -83,10 +96,10 @@ location /ttd/ {
 }
 # sisanya / → halomanap (Laravel)
 
-# conf.d/ttd.conf  (server block subdomain → verifier)
+# conf.d/ttd.conf  (server block subdomain → verifier; `dev` dipindah ke dev.conf)
 server {
     listen 80;
-    server_name ttd.rsudkotajambi.id dev.rsudkotajambi.id;
+    server_name ttd.rsudkotajambi.id;
     location / { proxy_pass http://ttd-verifier:8000; ... }
 }
 ```
@@ -97,19 +110,21 @@ server {
 
 | Endpoint | Fungsi | Status |
 |---|---|---|
-| `http://dev.rsudkotajambi.id/v/t01` | halaman VALID + TTD (**utama**) | ✅ AKTIF |
-| `http://dev.rsudkotajambi.id/v/t01/img` | PNG tanda tangan | ✅ 200 |
-| `http://dev.rsudkotajambi.id/healthz` | health check | ✅ `{"status":"ok"}` |
+| `http://dev.rsudkotajambi.id/` | **portal internal RSUD** (panel) | ✅ AKTIF |
+| `http://dev.rsudkotajambi.id/ttd/v/t01` | halaman VALID + TTD (**utama**) | ✅ |
+| `http://dev.rsudkotajambi.id/ttd/v/t01/img` | PNG tanda tangan | ✅ 200 |
+| `http://dev.rsudkotajambi.id/halo-manap/` | placeholder halomanap | ✅ |
+| `http://dev.rsudkotajambi.id/projek-3/` | placeholder projek-3 | ✅ |
+| `http://dev.rsudkotajambi.id/healthz` | health check verifier | ✅ `{"status":"ok"}` |
 | `https://minipacs-ttd.tail8394aa.ts.net/ttd/v/t01` | cadangan opsional (HTTPS) | ✅ |
-| `https://minipacs-ttd.tail8394aa.ts.net/` | halomanap via funnel (path lain tidak terganggu) | ✅ 200 |
-| ID tidak dikenal (`/v/t999`) | | ✅ 404 |
+| ID tidak dikenal (`/ttd/v/t999`) | | ✅ 404 |
 
-**QR web** (`output/qrcodes_web/`, 27 file) berisi `http://dev.rsudkotajambi.id/v/tXX`.
+**QR web** (`output/qrcodes_web/`, 27 file) berisi `http://dev.rsudkotajambi.id/ttd/v/tXX`.
 **QR offline** (`output/qrcodes/`) tetap payload `T1...` — tidak berubah.
 
-> ⚠️ `dev` dipakai sebagai alias verifier → `http://dev.rsudkotajambi.id/` menampilkan
-> verifier, **bukan** halomanap (sebelumnya halomanap). Kalau `dev` dibutuhkan lagi
-> untuk halomanap, lepas `dev` dari `server_name` di `ttd.conf` (§6).
+> ⚠️ `dev.rsudkotajambi.id/` adalah **portal internal** (panel), bukan halaman
+> halomanap — verifier TTD ada di `/ttd/`. Untuk menambah proyek baru tinggal
+> tambah `location /nama/` di `dev.conf` (+ isi `devpanel/nama/index.html`).
 
 ---
 
@@ -121,7 +136,7 @@ server {
 cd "/mnt/DiskD/Projects/TTD OK/signature-extractor"
 docker compose run --rm signature          # bila perlu proses ekstraksi ulang
 
-VERIFY_BASE_URL='http://dev.rsudkotajambi.id' \
+VERIFY_BASE_URL='http://dev.rsudkotajambi.id/ttd' \
 TTD_SERVER='mini_pacs@103.147.236.138' \
 TTD_DIR='/home/mini_pacs/ttd' \
 ./deploy.sh sync
@@ -130,7 +145,7 @@ TTD_DIR='/home/mini_pacs/ttd' \
 ### 5.2 Cek status verifier
 
 ```bash
-curl -s http://dev.rsudkotajambi.id/v/t01 | grep -o VALID
+curl -s http://dev.rsudkotajambi.id/ttd/v/t01 | grep -o VALID
 curl -s http://dev.rsudkotajambi.id/healthz                       # {"status":"ok"}
 ssh mini_pacs@103.147.236.138 'docker ps | grep ttd-verifier'
 ssh mini_pacs@103.147.236.138 'docker logs --tail 30 ttd-verifier'
@@ -143,7 +158,7 @@ cd "/mnt/DiskD/Projects/TTD OK/signature-extractor"
 TTD_SERVER='mini_pacs@103.147.236.138' ./deploy.sh setup
 # wajib join network agar nama ttd-verifier resolve dari nginx:
 ssh mini_pacs@103.147.236.138 'docker network connect halo-manap_default ttd-verifier'
-VERIFY_BASE_URL='http://dev.rsudkotajambi.id' \
+VERIFY_BASE_URL='http://dev.rsudkotajambi.id/ttd' \
 TTD_SERVER='mini_pacs@103.147.236.138' TTD_DIR='/home/mini_pacs/ttd' ./deploy.sh sync
 ```
 
@@ -167,15 +182,16 @@ docker exec tailscale tailscale funnel 8080      # serve :443 → 127.0.0.1:8080
 Saat subdomain baru bisa dibuat di panel (mis. `rs` atau `ttd`):
 
 1. **Panel DNS** — buat record seperti `dev`: nama `rs` → URL `http://103.147.236.138/`.
-2. **Server** — ganti `server_name` (lepas `dev` bila tidak perlu lagi):
+2. **Server** — pindahkan isi `dev.conf` ke `server_name rs...` (atau tambah `rs`
+   ke `server_name` di `dev.conf`):
    ```bash
    ssh mini_pacs@103.147.236.138
    cd ~/projects/halo-manap/docker/nginx/conf.d
-   sed -i 's/server_name ttd.rsudkotajambi.id dev.rsudkotajambi.id;/server_name rs.rsudkotajambi.id;/' ttd.conf
+   sed -i 's/server_name dev.rsudkotajambi.id;/server_name rs.rsudkotajambi.id;/' dev.conf
    docker exec halomanap-nginx nginx -t && docker exec halomanap-nginx nginx -s reload
    ```
-3. **QR** — `VERIFY_BASE_URL='http://rs.rsudkotajambi.id' ... ./deploy.sh sync`
-4. **Tes** — `curl -s http://rs.rsudkotajambi.id/v/t01 | grep -o VALID`
+3. **QR** — `VERIFY_BASE_URL='http://rs.rsudkotajambi.id/ttd' ... ./deploy.sh sync`
+4. **Tes** — `curl -s http://rs.rsudkotajambi.id/ttd/v/t01 | grep -o VALID`
 
 Total ±5 menit; versi QR tetap kecil, data di server tidak berubah.
 *(Funnel dapat tetap aktif sebagai cadangan; tidak perlu dimatikan.)*
