@@ -85,8 +85,9 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font);
   pointer-events:none}
 .sig img{max-width:100%;max-height:190px;display:block;position:relative;
   animation:sign 1s cubic-bezier(.16,1,.3,1) .25s both}
-.sig .sig-label{position:absolute;bottom:.6rem;left:1rem;font-family:var(--mono);
-  font-size:.55rem;color:var(--ink-3);letter-spacing:.14em;text-transform:uppercase}
+.sig .sig-label{position:absolute;bottom:.6rem;left:50%;transform:translateX(-50%);
+  font-family:var(--mono);font-size:.55rem;color:var(--ink-3);
+  letter-spacing:.14em;text-transform:uppercase;white-space:nowrap}
 .meta{margin-top:1.5rem;border-top:1px solid var(--border)}
 .meta-row{display:flex;justify-content:space-between;gap:1rem;
   padding:.85rem .1rem;border-bottom:1px solid var(--border-soft);
@@ -227,8 +228,7 @@ def index() -> str:
     body = f"""<div class="shell">
 <header class="brand">
   <span class="mark">{ICON_SHIELD}</span>
-  <div><span class="kicker">RSUD Kota Jambi</span><br><b>TTD&middot;OK</b>
-  <span class="sub">&nbsp;/&nbsp;{TITLE}</span></div>
+  <div><span class="kicker">RSUD H. ABDUL MANAP KOTA JAMBI</span><br><b>{TITLE}</b></div>
 </header>
 
 <div class="dash">
@@ -247,7 +247,7 @@ def index() -> str:
   </section>
 </div>
 </div>"""
-    return page(f"{TITLE} · RSUD Kota Jambi", body)
+    return page(f"{TITLE} · RSUD H. Abdul Manap Kota Jambi", body)
 
 
 @app.get("/v/{payload_id}", response_class=HTMLResponse)
@@ -258,8 +258,7 @@ def verifikasi(payload_id: str) -> str:
     body = f"""<div class="shell">
 <header class="brand" style="animation:rise .5s cubic-bezier(.16,1,.3,1) both">
   <span class="mark">{ICON_SHIELD}</span>
-  <div><span class="kicker">RSUD Kota Jambi</span><br><b>TTD&middot;OK</b>
-  <span class="sub">&nbsp;/&nbsp;{TITLE}</span></div>
+  <div><span class="kicker">RSUD H. ABDUL MANAP KOTA JAMBI</span><br><b>{TITLE}</b></div>
 </header>
 
 <main class="result">
@@ -276,7 +275,6 @@ def verifikasi(payload_id: str) -> str:
     <span class="sig-label">Tanda tangan digital</span>
   </div>
   <div class="meta">
-    <div class="meta-row" style="animation-delay:.15s"><span>Sumber dokumen</span><b>{html.escape(str(p.get('sumber', '-'))) }</b></div>
     <div class="meta-row" style="animation-delay:.2s"><span>Berkas arsip</span><b>{html.escape(str(p.get('png', '-'))) }</b></div>
     <div class="meta-row" style="animation-delay:.25s"><span>Status</span><b>AKTIF &middot; terverifikasi</b></div>
   </div>
