@@ -203,13 +203,12 @@ PAGE = """<!DOCTYPE html>
 <title>Signature Management — Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 @font-face{font-family:'Dancing Script';src:url('static/fonts/DancingScript.ttf') format('truetype')}
 @font-face{font-family:'Great Vibes';src:url('static/fonts/GreatVibes-Regular.ttf') format('truetype')}
 @font-face{font-family:'Allura';src:url('static/fonts/Allura-Regular.ttf') format('truetype')}
 @font-face{font-family:'Pacifico';src:url('static/fonts/Pacifico-Regular.ttf') format('truetype')}
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
 :root{--bg:#f9fafb;--surface:#fff;--border:#e2e8f0;--ink:#0f172a;--ink2:#475569;
 --ink3:#94a3b8;--accent:#059669;--accent-soft:rgba(5,150,105,.08);--accent-ink:#047857;
 --danger:#dc2626;--danger-soft:rgba(220,38,38,.07);
