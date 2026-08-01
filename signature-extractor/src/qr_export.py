@@ -133,7 +133,7 @@ def generate_all(output_dir: Path) -> Tuple[Path, List[dict]]:
         nama = re.sub(r"^\d+_", "", folder.name)
         try:
             data, (w, h) = signature_to_qr(sig, nama)
-            out = qr_dir / f"qr_{nama}.png"
+            out = qr_dir / f"{nama}.png"
             out.write_bytes(data)
             rows.append({"nama": nama, "status": "ok", "file": out.name,
                          "ttd_res": f"{w}x{h}"})

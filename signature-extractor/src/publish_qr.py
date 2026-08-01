@@ -61,7 +61,7 @@ def main() -> None:
                            box_size=8, border=2)
         qr.add_data(url)
         qr.make(fit=True)
-        out = qr_web / f"qr_{nama}.png"
+        out = qr_web / f"{nama}.png"
         qr.make_image(fill_color="black", back_color="white").save(out)
         rows.append((nama, url, qr.version))
 
