@@ -242,15 +242,18 @@ def is_active(p: dict) -> bool:
 
 
 # gelar yang lazim ditulis di DEPAN nama (sisanya di belakang)
-_GELAR_DEPAN = re.compile(r"^(dr|drg|prof|ns|ners|bdn|apt|hj|h)\.?$", re.I)
+_GELAR_DEPAN = re.compile(r"^(dr|drg|drh|ir|prof|ns|ners|bdn|apt|hj|h|tn|ny|nn)\.?$", re.I)
+# hilangkan spasi di dalam singkatan gelar: "Sp. M" -> "Sp.M", "S. Kep" -> "S.Kep"
+_SPASI_GELAR = re.compile(r"(?<=\.)\s+(?=[A-Za-z])")
 
 
 def nama_lengkap(nama: str, gelar: str = "") -> str:
-    """Gabung nama + gelar menjadi satu baris, mis. 'Dr. Rozy Oneta Sp. M'.
+    """Gabung nama + gelar sesuai kaidah EYD: 'dr. Rozy Oneta, Sp.M'.
 
-    Gelar bisa disimpan sebagai string bertanda koma ('dr., Sp. M',
-    'Ns., S.Kep') — gelar depan (dr/Ns/drg/Prof/...) diletakkan sebelum nama,
-    sisanya setelah nama. Tanpa gelar -> nama apa adanya.
+    Gelar bisa tersimpan bertanda koma ('dr., Sp. M', 'Ns., S.Kep') —
+    gelar depan (dr/Ns/drg/Prof/...) ditulis sebelum nama, sisanya setelah
+    nama dipisah koma. dr./drg. tetap huruf kecil; Sp. M dinormalisasi
+    jadi Sp.M (tanpa spasi).
     """
     nama = (nama or "").strip()
     if not gelar:
@@ -259,12 +262,19 @@ def nama_lengkap(nama: str, gelar: str = "") -> str:
     for g in (x.strip() for x in gelar.replace(" dan ", ",").split(",")):
         if not g:
             continue
-        g = g[:1].upper() + g[1:]          # 'dr.' -> 'Dr.'
+        g = _SPASI_GELAR.sub("", g)
         if _GELAR_DEPAN.match(g):
+            if g.lower().rstrip(".") in ("dr", "drg", "drh"):
+                g = g.lower()                  # dr. / drg. / drh. tetap kecil
+            else:
+                g = g[:1].upper() + g[1:]
             depan.append(g)
         else:
             belakang.append(g)
-    return " ".join(p for p in (depan + [nama] + belakang) if p)
+    head = " ".join(depan)
+    tail = ", " + ", ".join(belakang) if belakang else ""
+    core = (nama + tail) if tail else nama
+    return " ".join(p for p in (head, core) if p)
 
 
 @app.get("/", response_class=HTMLResponse)
