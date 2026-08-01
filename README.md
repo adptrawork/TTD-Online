@@ -189,7 +189,7 @@ docker compose up -d verifier
 |---|---|---|
 | **Server terpisah** ✅ (paling bersih) | Deploy verifier di server Linux + Docker; mesin lokal cukup kirim data via `deploy.sh` | Punya server sendiri, TTD di server internal |
 | **LAN kantor** (paling cepat) | `VERIFY_BASE_URL="http://<ip-lan>:8123" python src/publish_qr.py`; HP di WiFi kantor scan langsung | Kantor dengan WiFi sendiri |
-| **Cloudflare Tunnel** | `cloudflared tunnel --url http://localhost:8123` → URL `https://xxx.trycloudflare.com`; permanen butuh domain + [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) (auth email, 50 user gratis) | Akses dari mana saja, terkunci |
+| **Cloudflare Tunnel** ✅ (tanpa buka port) | jalankan `cloudflared` (container) di server → URL `https://xxx.trycloudflare.com`; permanen butuh domain + [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) | Server di belakang firewall, tanpa sudo |
 | **Tailscale Funnel** | Install Tailscale; `tailscale funnel 8123` → `https://<machine>.ts.net`; hanya perangkat di tailnet | Tim kecil, semua perangkat di-manage |
 
 Setelah URL final didapat, regenerate QR sekali lagi dengan `VERIFY_BASE_URL`
@@ -218,6 +218,29 @@ Yang dikirim hanya yang dibutuhkan verifier: folder pegawai (`signature.png`)
 + `verifier_index.json` (dibuat `publish_qr.py`). Verifier membaca data
 per-request → **update data tidak perlu restart server**. Saat ada dokumen
 baru: jalankan pipeline → `./deploy.sh sync`.
+
+### Cloudflare Tunnel tanpa buka port (quick tunnel)
+
+Cocok saat server di belakang firewall/cloud dan user tidak punya sudo — cukup
+akses Docker. Jalankan di server:
+
+```bash
+# 1. jalankan tunnel (URL acak https://xxx.trycloudflare.com)
+docker run -d --name ttd-tunnel --restart unless-stopped \
+  --network host cloudflare/cloudflared tunnel --url http://localhost:8123
+
+# 2. ambil URL-nya
+docker logs ttd-tunnel 2>&1 | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | head -1
+
+# 3. di mesin lokal: generate QR + kirim data dgn URL itu
+VERIFY_BASE_URL='https://xxx.trycloudflare.com' \
+TTD_SERVER='user@server' TTD_DIR='/home/user/ttd' ./deploy.sh sync
+```
+
+⚠️ **URL quick tunnel berubah** setiap container di-restart → QR lama mati.
+Kalau URL berubah, cukup jalankan ulang langkah 3 (data tidak perlu diubah).
+Untuk URL permanen: `cloudflared tunnel login` (butuh akun Cloudflare + domain)
+lalu named tunnel — QR tidak berubah lagi.
 
 ### Format metadata.json
 

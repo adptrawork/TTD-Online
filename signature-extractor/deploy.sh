@@ -26,7 +26,7 @@ cd "$SCRIPT_DIR"
 SERVER="${TTD_SERVER:-}"
 TTD_DIR="${TTD_DIR:-/opt/ttd}"
 BASE_URL="${VERIFY_BASE_URL:-}"
-IMG="ttd-verifier"
+IMG="signature-extractor-verifier"
 IMAGE_LOCAL="signature-extractor-verifier"
 CMD="${1:-help}"
 
