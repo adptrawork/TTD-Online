@@ -45,10 +45,10 @@ from qrcode.constants import ERROR_CORRECT_M
 
 from process import process_image, png_size
 
-from db import (_lock, build_cache, connect, create_signature, ensure_folders,
-                get_audit, get_signature, get_versions, list_signatures,
-                rel_signature, set_status, update_signature_version,
-                write_metadata, signature_dir)
+from db import (_lock, build_cache, connect, create_signature, delete_signature,
+                ensure_folders, get_audit, get_signature, get_versions,
+                list_signatures, rel_signature, set_status,
+                update_signature_version, write_metadata, signature_dir)
 
 PUBLIC_BASE_URL = os.environ.get(
     "PUBLIC_BASE_URL", "http://dev.rsudkotajambi.id/ttd").rstrip("/")
@@ -232,6 +232,8 @@ cursor:pointer;font-family:var(--font);font-weight:600;transition:opacity .2s}
 .b-off:hover{opacity:.85}
 .b-on{background:var(--accent);color:#fff}
 .b-on:hover{opacity:.85}
+.b-del{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.b-del:hover{background:#fee2e2}
 table{width:100%;border-collapse:collapse;font-size:.85rem}
 th{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
 color:var(--ink3);text-align:left;padding:.5rem .75rem;border-bottom:1px solid var(--border)}
@@ -305,7 +307,9 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 </div>
 
 <script>
-const BASE = "";
+// BASE otomatis dari path halaman (mis. /ttd-admin saat diakses lewat nginx,
+// atau "" saat container diakses langsung) — semua fetch jadi benar di dua mode.
+const BASE = location.pathname.replace(/\/+$/, "");
 let rows = 0;
 function addRow(nama="", gelar="") {
   rows++;
@@ -369,6 +373,14 @@ async function act(pid, action) {
   loadList(); loadAudit();
 }
 
+async function del(pid, nama) {
+  if (!confirm(`Hapus permanen ${pid} (${nama})?\n\nData, gambar, dan riwayat versi akan dihapus. Tindakan ini TIDAK bisa dibatalkan.`)) return;
+  const res = await fetch(`${BASE}/api/${pid}/delete`, { method:"POST" });
+  const r = await res.json();
+  if (r.ok) { loadList(); loadAudit(); loadLogs(); }
+  else alert("Gagal hapus: " + (r.detail || r.error || "?"));
+}
+
 function updRow(pid) {
   const tr = document.getElementById("tr-" + pid);
   const file = tr.querySelector(".upd-file");
@@ -412,6 +424,7 @@ async function loadList() {
       ${p.status === 'active'
         ? `<button class="btn-mini b-off" onclick="act('${p.pid}','deactivate')">nonaktifkan</button>`
         : `<button class="btn-mini b-on" onclick="act('${p.pid}','activate')">aktifkan</button>`}
+      <button class="btn-mini b-del" onclick="del('${p.pid}', '${esc(p.nama_display)}')">hapus</button>
     </td></tr>`;
   }).join("");
 }
@@ -433,7 +446,7 @@ async function loadLogs() {
     const r = await fetch(BASE + "/api/logs?lines=150");
     const d = await r.json();
     box.textContent = d.logs && d.logs.length
-      ? d.logs.join("\n") : "(belum ada log)";
+      ? d.logs.join("\\n") : "(belum ada log)";
   } catch (e) {
     box.textContent = "gagal memuat log: " + e;
   }
@@ -618,6 +631,17 @@ def api_activate(pid: str) -> dict:
     write_metadata(pid)
     log.info("ACTIVATE %s | %s", pid, row["name"])
     return {"ok": True, "pid": pid, "status": row["status"]}
+
+
+@app.post("/api/{pid}/delete")
+def api_delete(pid: str) -> dict:
+    row = delete_signature(pid)
+    if row is None:
+        raise HTTPException(404, "pid tidak ditemukan")
+    build_cache()
+    log.info("DELETE %s | %s (permanen)", pid, row["name"])
+    return {"ok": True, "pid": pid, "deleted": True,
+            "nama": row["name"]}
 
 
 @app.get("/api/{pid}/qr")

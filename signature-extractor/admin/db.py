@@ -21,6 +21,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import shutil
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -232,6 +233,36 @@ def get_signature(pid: str) -> Optional[dict]:
         row = conn.execute(
             "SELECT * FROM signatures WHERE pid = ?", (pid,)).fetchone()
         return _row_to_dict(row) if row else None
+
+
+def delete_signature(pid: str) -> Optional[dict]:
+    """Hapus permanen: baris DB (+versions) + folder signatures/<pid>/.
+
+    Pid TIDAK dipakai ulang (seq tetap), sehingga QR/URL lama otomatis 404.
+    Riwayat aksi tetap tersimpan di audit_log (target pid + detail nama).
+    Folder lama (NN_Slug legacy) tidak disentuh.
+    """
+    init_db()
+    with _lock():
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM signatures WHERE pid = ?", (pid,)).fetchone()
+            if row is None:
+                return None
+            detail = f"{row['name']} (v{row['version']})"
+            ts = now_iso()
+            # simpan dulu ke audit, lalu hapus (ON DELETE CASCADE versi)
+            conn.execute(
+                "INSERT INTO audit_log (ts, actor, action, target, detail) "
+                "VALUES (?,?,?,?,?)",
+                (ts, "admin", "delete", pid, detail))
+            conn.execute("DELETE FROM signatures WHERE pid = ?", (pid,))
+    # hapus folder di luar transaksi DB (dilindungi lock yang sama)
+    with _lock():
+        folder = SIGNATURES_DIR / pid
+        if folder.exists():
+            shutil.rmtree(folder, ignore_errors=True)
+    return _row_to_dict(row)
 
 
 def list_signatures(include_inactive: bool = True) -> list[dict]:
