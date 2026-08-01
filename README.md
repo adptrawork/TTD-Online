@@ -187,6 +187,7 @@ docker compose up -d verifier
 
 | Jalur | Cara | Cocok untuk |
 |---|---|---|
+| **Subdomain + nginx multi-proyek** ✅ (dipakai) | DNS `ttd → IP MikroTik`, NAT :80 → server, `conf.d/ttd.conf` proxy ke verifier — QR permanen | Ada server di belakang NAT/router + domain sendiri |
 | **Server terpisah** ✅ (paling bersih) | Deploy verifier di server Linux + Docker; mesin lokal cukup kirim data via `deploy.sh` | Punya server sendiri, TTD di server internal |
 | **LAN kantor** (paling cepat) | `VERIFY_BASE_URL="http://<ip-lan>:8123" python src/publish_qr.py`; HP di WiFi kantor scan langsung | Kantor dengan WiFi sendiri |
 | **Cloudflare Tunnel** ✅ (tanpa buka port) | jalankan `cloudflared` (container) di server → URL `https://xxx.trycloudflare.com`; permanen butuh domain + [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) | Server di belakang firewall, tanpa sudo |
@@ -194,6 +195,45 @@ docker compose up -d verifier
 
 Setelah URL final didapat, regenerate QR sekali lagi dengan `VERIFY_BASE_URL`
 baru — QR versi hanya 2–3 (URL pendek), sangat mudah discan.
+
+**Fase 3 — URL permanen via subdomain (dipakai saat ini):**
+
+```
+HP scan QR → http://ttd.rsudkotajambi.id/v/t01
+        │  DNS A: ttd → 103.147.236.138 (MikroTik publik)
+        ▼
+MikroTik NAT :80 → 192.168.2.220:8080  (nginx halomanap)
+        ▼
+nginx conf.d/ttd.conf (server_name ttd.rsudkotajambi.id)
+        ▼
+proxy_pass http://ttd-verifier:8000   (network halo-manap_default)
+```
+
+Pola **nginx multi-proyek**: container halomanap-nginx me-mount folder
+`docker/nginx/conf.d/` (bukan satu file), jadi tiap proyek cukup 1 file `.conf`
++ subdomain DNS sendiri:
+
+```bash
+# di server ~/projects/halo-manap
+mkdir -p docker/nginx/conf.d
+mv docker/nginx/default.conf docker/nginx/conf.d/
+# conf.d/ttd.conf — server block verifier (lihat repo halomanap2)
+docker compose up -d nginx                      # recreate ±2 detik
+docker network connect halo-manap_default ttd-verifier
+```
+
+```nginx
+# docker/nginx/conf.d/ttd.conf
+server {
+    listen 80;
+    server_name ttd.rsudkotajambi.id;
+    location / { proxy_pass http://ttd-verifier:8000; }
+}
+```
+
+⚠️ **Penting:** `103.147.236.138:8080` dari luar itu **webfig MikroTik**, bukan
+server — server ada di belakang NAT MikroTik (IP lokal `192.168.2.220`), akses
+publik lewat NAT `:80 → :8080`. Jangan pakai port 8080 untuk publik.
 
 ### Deploy ke server terpisah (Linux + SSH + Docker)
 
