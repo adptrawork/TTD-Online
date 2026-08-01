@@ -29,11 +29,18 @@ FONTS_DIR = Path(__file__).resolve().parent / "fonts"
 
 # Font tanda tangan (mode Type) — TTF Google Fonts (OFL) di-bundle saat build.
 # key = id font yang dipakai frontend; value = nama file TTF.
+# Referensi: https://certifast.co/blog/10-google-fonts-that-look-like-signatures
 TYPE_FONTS: dict[str, str] = {
+    "alex-brush": "AlexBrush-Regular.ttf",
     "dancing-script": "DancingScript.ttf",
     "great-vibes": "GreatVibes-Regular.ttf",
-    "allura": "Allura-Regular.ttf",
     "pacifico": "Pacifico-Regular.ttf",
+    "satisfy": "Satisfy.ttf",
+    "allura": "Allura-Regular.ttf",
+    "shadows-into-light": "ShadowsIntoLight.ttf",
+    "kaushan-script": "KaushanScript-Regular.ttf",
+    "sacramento": "Sacramento-Regular.ttf",
+    "parisienne": "Parisienne-Regular.ttf",
 }
 
 TYPE_INK = (30, 58, 95, 255)  # navy tua (RGBA) — warna tinta tanda tangan

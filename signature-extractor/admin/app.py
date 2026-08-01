@@ -209,6 +209,12 @@ PAGE = """<!DOCTYPE html>
 @font-face{font-family:'Great Vibes';src:url('static/fonts/GreatVibes-Regular.ttf') format('truetype')}
 @font-face{font-family:'Allura';src:url('static/fonts/Allura-Regular.ttf') format('truetype')}
 @font-face{font-family:'Pacifico';src:url('static/fonts/Pacifico-Regular.ttf') format('truetype')}
+@font-face{font-family:'Alex Brush';src:url('static/fonts/AlexBrush-Regular.ttf') format('truetype')}
+@font-face{font-family:'Satisfy';src:url('static/fonts/Satisfy.ttf') format('truetype')}
+@font-face{font-family:'Shadows Into Light';src:url('static/fonts/ShadowsIntoLight.ttf') format('truetype')}
+@font-face{font-family:'Kaushan Script';src:url('static/fonts/KaushanScript-Regular.ttf') format('truetype')}
+@font-face{font-family:'Sacramento';src:url('static/fonts/Sacramento-Regular.ttf') format('truetype')}
+@font-face{font-family:'Parisienne';src:url('static/fonts/Parisienne-Regular.ttf') format('truetype')}
 :root{--bg:#f9fafb;--surface:#fff;--border:#e2e8f0;--ink:#0f172a;--ink2:#475569;
 --ink3:#94a3b8;--accent:#059669;--accent-soft:rgba(5,150,105,.08);--accent-ink:#047857;
 --danger:#dc2626;--danger-soft:rgba(220,38,38,.07);
@@ -413,10 +419,16 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
         <input type="text" id="editTypeText" placeholder="Teks tanda tangan" oninput="updateEditPreview()">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
           <select id="editTypeFont" onchange="updateEditPreview()">
+            <option value="alex-brush">Alex Brush</option>
             <option value="dancing-script">Dancing Script</option>
             <option value="great-vibes">Great Vibes</option>
-            <option value="allura">Allura</option>
             <option value="pacifico">Pacifico</option>
+            <option value="satisfy">Satisfy</option>
+            <option value="allura">Allura</option>
+            <option value="shadows-into-light">Shadows Into Light</option>
+            <option value="kaushan-script">Kaushan Script</option>
+            <option value="sacramento">Sacramento</option>
+            <option value="parisienne">Parisienne</option>
           </select>
           <div style="display:flex;align-items:center;gap:.6rem">
             <input type="range" min="40" max="160" value="96" id="editTypeSize" oninput="updateEditPreview()">
@@ -459,10 +471,16 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 const BASE = location.pathname.replace(/\\/+$/, "");
 let rows = 0;
 const FONTS = {
+  "alex-brush": "'Alex Brush'",
   "dancing-script": "'Dancing Script'",
   "great-vibes": "'Great Vibes'",
+  "pacifico": "'Pacifico'",
+  "satisfy": "'Satisfy'",
   "allura": "'Allura'",
-  "pacifico": "'Pacifico'"
+  "shadows-into-light": "'Shadows Into Light'",
+  "kaushan-script": "'Kaushan Script'",
+  "sacramento": "'Sacramento'",
+  "parisienne": "'Parisienne'"
 };
 function resizeSigCanvas(canvas) {
   // Sinkronkan ukuran internal canvas dgn ukuran tampil (× devicePixelRatio)
@@ -574,10 +592,16 @@ function addRow(nama="", gelar="", method="upload") {
         <input type="text" class="t-text" placeholder="Teks tanda tangan (default: nama)" value="${esc(nama)}" oninput="updateTypePreview(this.closest('.row'))">
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
           <select class="t-font" onchange="updateTypePreview(this.closest('.row'))">
+            <option value="alex-brush">Alex Brush</option>
             <option value="dancing-script">Dancing Script</option>
             <option value="great-vibes">Great Vibes</option>
-            <option value="allura">Allura</option>
             <option value="pacifico">Pacifico</option>
+            <option value="satisfy">Satisfy</option>
+            <option value="allura">Allura</option>
+            <option value="shadows-into-light">Shadows Into Light</option>
+            <option value="kaushan-script">Kaushan Script</option>
+            <option value="sacramento">Sacramento</option>
+            <option value="parisienne">Parisienne</option>
           </select>
           <div style="display:flex;align-items:center;gap:.6rem">
             <input type="range" min="40" max="160" value="96" class="t-size" oninput="updateTypePreview(this.closest('.row'))">
