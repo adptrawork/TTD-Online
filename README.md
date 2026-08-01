@@ -150,6 +150,50 @@ payload_qr    = "T1" + base64(payload_bytes)
 TTD di-threshold ke biner 1-bit (tinta hitam di kertas putih) sehingga ukuran
 PNG turun 30–50× → versi QR 16–25 (mudah discan HP) dengan resolusi TTD penuh.
 
+---
+
+## Verifikasi Online (Internal Organisasi)
+
+Untuk verifikasi dari HP pegawai, QR berisi **URL pendek** (`/v/<id>`) yang
+membuka halaman verifikasi di backend kecil (FastAPI). TTD **tidak pernah
+dipublikasikan** — backend hanya diakses internal / via tunnel terkunci.
+
+```
+QR (qrcodes_web/) = https://<host>/v/t01
+        │  scan HP → browser
+        ▼
+┌────────────────────────────┐
+│ verifier/ (FastAPI, Docker)│   /v/<id>       halaman VALID + nama + TTD
+│ port 8123, data: output/   │   /v/<id>/img   PNG tanda tangan
+└────────────────────────────┘   /v/<id>/json  metadata (integrasi)
+```
+
+**Fase 1 — jalan lokal** (sudah selesai):
+
+```bash
+cd signature-extractor
+
+# 1. Buat index + QR berisi URL (default http://localhost:8123)
+docker compose run --rm signature python src/publish_qr.py
+
+# 2. Jalankan backend verifier
+docker compose up -d verifier
+
+# 3. Buka di browser
+#    http://localhost:8123/v/t01
+```
+
+**Fase 2 — akses dari HP / luar jaringan** (pilih salah satu):
+
+| Jalur | Cara | Cocok untuk |
+|---|---|---|
+| **LAN kantor** (paling cepat) | `VERIFY_BASE_URL="http://<ip-lan>:8123" python src/publish_qr.py`; HP di WiFi kantor scan langsung | Kantor dengan WiFi sendiri |
+| **Cloudflare Tunnel** | `cloudflared tunnel --url http://localhost:8123` → URL `https://xxx.trycloudflare.com`; permanen butuh domain + [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/) (auth email, 50 user gratis) | Akses dari mana saja, terkunci |
+| **Tailscale Funnel** | Install Tailscale; `tailscale funnel 8123` → `https://<machine>.ts.net`; hanya perangkat di tailnet | Tim kecil, semua perangkat di-manage |
+
+Setelah URL final didapat, regenerate QR sekali lagi dengan `VERIFY_BASE_URL`
+baru — QR versi hanya 3–4 (URL pendek), sangat mudah discan.
+
 ### Format metadata.json
 
 ```json

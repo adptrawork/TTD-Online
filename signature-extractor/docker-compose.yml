@@ -12,4 +12,24 @@ services:
       - ./debug:/app/debug
       - ./src:/app/src
 
+    environment:
+      - VERIFY_BASE_URL=${VERIFY_BASE_URL:-http://localhost:8123}
+
     restart: "no"
+
+  verifier:
+
+    build: ./verifier
+
+    container_name: ttd-verifier
+
+    ports:
+      - "8123:8000"
+
+    volumes:
+      - ./output:/data:ro
+
+    environment:
+      - VERIFY_TITLE=Verifikasi Tanda Tangan
+
+    restart: unless-stopped
