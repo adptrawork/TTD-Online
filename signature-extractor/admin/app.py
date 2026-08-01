@@ -16,7 +16,7 @@ Endpoint:
     GET  /                       -> halaman admin (HTML)
     GET  /api/list               -> daftar pegawai + status (JSON)
     POST /api/upload             -> tambah 1..N pegawai baru (multipart)
-    POST /api/<pid>/update       -> upload versi baru TTD utk pegawai existing
+    POST /api/<pid>/edit         -> edit nama/gelar, opsional ganti gambar (versi baru)
     POST /api/<pid>/deactivate   -> soft delete (status inactive)
     POST /api/<pid>/activate     -> aktifkan kembali
     GET  /api/<pid>/qr           -> PNG QR on-the-fly
@@ -227,8 +227,6 @@ gap:.5rem;transition:transform .3s cubic-bezier(.16,1,.3,1),opacity .3s}
 .btn-mini{font-size:.72rem;padding:.32rem .7rem;border-radius:999px;border:0;
 cursor:pointer;font-family:var(--font);font-weight:600;transition:opacity .2s}
 .btn-mini:active{transform:scale(.97)}
-.b-up{background:var(--accent-soft);color:var(--accent-ink)}
-.b-up:hover{opacity:.85}
 .b-off{background:var(--danger-soft);color:var(--danger)}
 .b-off:hover{opacity:.85}
 .b-on{background:var(--accent);color:#fff}
@@ -238,7 +236,8 @@ cursor:pointer;font-family:var(--font);font-weight:600;transition:opacity .2s}
 .b-edit{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
 .b-edit:hover{background:#dbeafe}
 dialog{border:0;border-radius:1.25rem;box-shadow:0 25px 60px -15px rgba(15,23,42,.35);
-width:min(30rem,92vw);padding:1.5rem;font-family:var(--font)}
+width:min(30rem,92vw);padding:1.5rem;font-family:var(--font);margin:auto;inset:0;
+max-height:90dvh;overflow:auto}
 dialog::backdrop{background:rgba(15,23,42,.45);backdrop-filter:blur(2px)}
 dialog h3{font-size:1.05rem;font-weight:700;margin-bottom:.2rem}
 dialog .e-pid{font-family:var(--mono);font-size:.7rem;color:var(--ink3);margin-bottom:1rem}
@@ -272,7 +271,6 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 #res .ok{background:rgba(5,150,105,.08);color:var(--accent-ink)}
 #res .err{background:var(--danger-soft);color:#b91c1c}
 #res .link{font-family:var(--mono);font-size:.72rem;color:var(--accent-ink);text-decoration:none}
-.upd-file{display:none}
 @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 </style></head><body><div class="wrap">
 <header>
@@ -299,8 +297,8 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 
 <div class="card">
   <h2>Arsip tanda tangan</h2>
-  <p class="desc">Re-upload = versi baru (versi lama otomatis di-archive).
-  Nonaktifkan = soft delete (tetap tersimpan, tidak ditampilkan publik).</p>
+  <p class="desc">Ganti gambar = versi baru (versi lama otomatis di-archive) — lewat
+  tombol <b>edit</b>. Nonaktifkan = soft delete (tetap tersimpan, tidak ditampilkan publik).</p>
   <table><thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Versi</th>
   <th>QR</th><th>Tanda tangan</th><th>Aksi</th></tr></thead>
   <tbody id="tbody"></tbody></table>
@@ -325,7 +323,7 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 
 <div class="card">
   <h2>Audit trail</h2>
-  <p class="desc">Riwayat setiap aksi admin (create / edit / update / activate / deactivate).</p>
+  <p class="desc">Riwayat setiap aksi admin (create / edit / activate / deactivate / delete).</p>
   <table><thead><tr><th>Waktu</th><th>Aksi</th><th>Target</th><th>Detail</th></tr></thead>
   <tbody id="auditBody"></tbody></table>
 </div>
@@ -343,7 +341,7 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 <script>
 // BASE otomatis dari path halaman (mis. /ttd-admin saat diakses lewat nginx,
 // atau "" saat container diakses langsung) — semua fetch jadi benar di dua mode.
-const BASE = location.pathname.replace(/\/+$/, "");
+const BASE = location.pathname.replace(/\\/+$/, "");
 let rows = 0;
 function addRow(nama="", gelar="") {
   rows++;
@@ -456,26 +454,6 @@ async function saveEdit() {
   loadList(); loadAudit(); loadLogs();
 }
 
-function updRow(pid) {
-  const tr = document.getElementById("tr-" + pid);
-  const file = tr.querySelector(".upd-file");
-  if (!file) return;
-  file.style.display = (file.style.display === "none" ? "inline-block" : "none");
-  if (file.style.display !== "none") file.querySelector("input[type=file]").click();
-}
-async function upd(pid, input) {
-  const f = input.files[0];
-  if (!f) { input.closest(".upd-file").style.display = "none"; return; }
-  const fd = new FormData();
-  fd.append("file", f);
-  const res = await fetch(`${BASE}/api/${pid}/update`, { method:"POST", body: fd });
-  const r = await res.json();
-  alert(r.ok ? `${pid} → v${r.version} OK` : "Gagal: " + (r.error || "?"));
-  input.value = "";
-  input.closest(".upd-file").style.display = "none";
-  loadList(); loadAudit();
-}
-
 async function loadList() {
   const r = await fetch(BASE + "/api/list");
   const d = await r.json();
@@ -494,9 +472,7 @@ async function loadList() {
     <td><a class="pill" href="${BASE}/api/${p.pid}/qr" target="_blank">QR</a></td>
     <td><a class="pill" href="${BASE}/api/${p.pid}/img" target="_blank">lihat</a></td>
     <td style="white-space:nowrap">
-      <span class="upd-file"><input type="file" accept="image/*" onchange="upd('${p.pid}', this)"></span>
       <button class="btn-mini b-edit" onclick="editRow('${p.pid}')">edit</button>
-      <button class="btn-mini b-up" onclick="updRow('${p.pid}')">update</button>
       ${p.status === 'active'
         ? `<button class="btn-mini b-off" onclick="act('${p.pid}','deactivate')">nonaktifkan</button>`
         : `<button class="btn-mini b-on" onclick="act('${p.pid}','activate')">aktifkan</button>`}
@@ -634,57 +610,6 @@ def _load_upload_png(f: UploadFile, pid: str, source: str) -> tuple[bytes, bytes
     if png is None:
         raise ValueError("tidak terdeteksi tinta / format tidak dikenali")
     return png, raw
-
-
-@app.post("/api/{pid}/update")
-async def api_update(pid: str, file: UploadFile = File(...)) -> dict:
-    row = get_signature(pid)
-    if row is None:
-        raise HTTPException(404, "pid tidak ditemukan")
-    try:
-        raw = await file.read()
-        if not raw:
-            raise ValueError("file kosong")
-        png = process_image(raw)
-        if png is None:
-            raise ValueError("tidak terdeteksi tinta / format tidak dikenali")
-
-        orig_name = file.filename or "upload.jpg"
-        ext = orig_name.rsplit(".", 1)[-1].lower() if "." in orig_name else "jpg"
-        if ext not in ("jpg", "jpeg", "png"):
-            ext = "jpg"
-
-        old_ver = row["version"]
-        # archive versi lama sebelum overwrite
-        archive_previous(pid, old_ver)
-        updated = update_signature_version(
-            pid, name=row["name"], title=row["title"],
-            source=orig_name, original_rel="", processed_rel="")
-        if updated is None:
-            raise HTTPException(500, "gagal memperbarui versi")
-        paths = store_upload(pid, png, raw, ext, orig_name)
-        new_ver = updated["version"]
-        with _lock():
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE signatures SET original_rel=?, processed_rel=? WHERE pid=?",
-                    (paths["original"], paths["processed"], pid))
-                conn.execute(
-                    "UPDATE signature_versions SET original_rel=?, processed_rel=? "
-                    "WHERE signature_id=? AND version=?",
-                    (paths["original"], paths["processed"], updated["id"], new_ver))
-        write_full_metadata(pid)
-        build_cache()
-        w, h = png_size(png)
-        log.info("UPDATE %s -> v%d | %s | %dx%d | src=%s",
-                 pid, new_ver, row["name"], w, h, orig_name)
-        return {"ok": True, "pid": pid, "version": new_ver, "w": w, "h": h,
-                "url": f"{PUBLIC_BASE_URL}/v/{pid}"}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        log.error("UPDATE GAGAL %s | %s\n%s", pid, exc, traceback.format_exc())
-        return {"ok": False, "error": str(exc)}
 
 
 @app.post("/api/{pid}/edit")
