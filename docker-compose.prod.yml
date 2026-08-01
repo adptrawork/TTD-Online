@@ -1,0 +1,44 @@
+# docker-compose.yml — TTD Online (production)
+#
+# Deploy:  git pull && docker compose up -d --build
+#
+# Container memakai nama TETAP (ttd-admin, ttd-verifier) dan join network
+# halo-manap_default (external) agar reverse-proxy nginx (halomanap-nginx)
+# tetap menemukan mereka tanpa mengubah konfigurasi.
+#
+# Data tersimpan di ./data (relatif ke file ini):
+#   data/database/signatures.db   <- source of truth (SQLite)
+#   data/cache/verifier_index.json<- cache verifier
+#   data/signatures/<pid>/        <- gambar per pegawai
+#   data/logs/                    <- admin.log + verifier.log
+
+services:
+
+  admin:
+    build: ./signature-extractor/admin
+    image: ttd-admin:latest
+    container_name: ttd-admin
+    restart: unless-stopped
+    volumes:
+      - ./data:/data:rw
+    environment:
+      - DATA_ROOT=/data
+      - PUBLIC_BASE_URL=http://dev.rsudkotajambi.id/ttd
+    networks:
+      - halo-manap_default
+    # tidak publish port publik — akses hanya lewat nginx (/ttd-admin/)
+
+  verifier:
+    build: ./signature-extractor/verifier
+    image: ttd-verifier:latest
+    container_name: ttd-verifier
+    restart: unless-stopped
+    volumes:
+      - ./data:/data:ro
+    networks:
+      - halo-manap_default
+    # akses publik lewat nginx (/ttd/)
+
+networks:
+  halo-manap_default:
+    external: true
