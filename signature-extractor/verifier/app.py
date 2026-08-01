@@ -16,6 +16,7 @@ from __future__ import annotations
 import html
 import json
 import logging
+import re
 import traceback
 from pathlib import Path
 
@@ -103,7 +104,6 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font);
 .person{margin-top:1.5rem}
 .person .nama{font-size:clamp(1.6rem,6vw,2.2rem);font-weight:800;
   letter-spacing:-.03em;line-height:1.05}
-.person .gelar{color:var(--ink-2);font-size:1rem;margin-top:.35rem}
 .sig{margin-top:1.75rem;background:#fcfdfc;border:1px solid var(--border);
   border-radius:1.5rem;padding:1.5rem;display:grid;place-items:center;
   position:relative;overflow:hidden;animation:rise .55s cubic-bezier(.16,1,.3,1) .12s both}
@@ -150,7 +150,6 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font);
 .lrow .lnm{flex:1;min-width:0}
 .lrow .lnm b{display:block;font-weight:600;font-size:.92rem;letter-spacing:-.01em;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.lrow .lnm small{display:block;color:var(--ink-3);font-size:.72rem;margin-top:.1rem}
 .lrow .arr{flex:none;color:var(--ink-3);transition:transform .3s cubic-bezier(.16,1,.3,1)}
 .lrow:hover .arr{transform:translateX(3px);color:var(--accent)}
 .lrow:hover .lnm b{color:var(--accent-ink)}
@@ -242,6 +241,32 @@ def is_active(p: dict) -> bool:
     return str(p.get("status", "active")).lower() == "active"
 
 
+# gelar yang lazim ditulis di DEPAN nama (sisanya di belakang)
+_GELAR_DEPAN = re.compile(r"^(dr|drg|prof|ns|ners|bdn|apt|hj|h)\.?$", re.I)
+
+
+def nama_lengkap(nama: str, gelar: str = "") -> str:
+    """Gabung nama + gelar menjadi satu baris, mis. 'Dr. Rozy Oneta Sp. M'.
+
+    Gelar bisa disimpan sebagai string bertanda koma ('dr., Sp. M',
+    'Ns., S.Kep') — gelar depan (dr/Ns/drg/Prof/...) diletakkan sebelum nama,
+    sisanya setelah nama. Tanpa gelar -> nama apa adanya.
+    """
+    nama = (nama or "").strip()
+    if not gelar:
+        return nama
+    depan, belakang = [], []
+    for g in (x.strip() for x in gelar.replace(" dan ", ",").split(",")):
+        if not g:
+            continue
+        g = g[:1].upper() + g[1:]          # 'dr.' -> 'Dr.'
+        if _GELAR_DEPAN.match(g):
+            depan.append(g)
+        else:
+            belakang.append(g)
+    return " ".join(p for p in (depan + [nama] + belakang) if p)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     data = load_index()
@@ -250,12 +275,11 @@ def index() -> str:
     rows = []
     for i, (k, v) in enumerate(sorted(active.items(), key=lambda kv: kv[1]["no"])):
         nama = v.get("nama_display") or v["nama"]
-        gelar = v.get("gelar") or "pegawai"
+        gelar = v.get("gelar") or ""
         rows.append(
             f'<a class="lrow" style="animation-delay:{i * 45}ms" href="v/{html.escape(k)}">'
             f'<span class="ln">#{v["no"]:02d}</span>'
-            f'<span class="lnm"><b>{html.escape(nama)}</b>'
-            f'<small>{html.escape(gelar)}</small></span>'
+            f'<span class="lnm"><b>{html.escape(nama_lengkap(nama, gelar))}</b></span>'
             f"{ICON_ARROW}</a>"
         )
     body = f"""<div class="shell">
@@ -288,8 +312,9 @@ def verifikasi(payload_id: str) -> str:
     p = get_pegawai(payload_id)
     nama = p.get("nama_display") or p["nama"]
     gelar = p.get("gelar") or ""
+    nama_full = nama_lengkap(nama, gelar)
     aktif = is_active(p)
-    log.info("VERIFIKASI %s | %s | %s", payload_id, nama,
+    log.info("VERIFIKASI %s | %s | %s", payload_id, nama_full,
              "aktif" if aktif else "NONAKTIF")
     status_html = (
         '<span class="status"><span class="dot"></span>Valid</span>'
@@ -304,7 +329,7 @@ def verifikasi(payload_id: str) -> str:
                    f'color:var(--accent-ink)">{method_label}</span>')
     status_meta = "AKTIF &middot; terverifikasi" if aktif else "NONAKTIF &middot; dinonaktifkan"
     sig_html = (f'<img src="{html.escape(payload_id)}/img" '
-                f'alt="Citra tanda tangan {html.escape(nama)}">') if aktif else (
+                f'alt="Citra tanda tangan {html.escape(nama_full)}">') if aktif else (
         f'<div style="color:var(--ink-3);font-size:.85rem;text-align:center;'
         f'padding:2rem 0">Tanda tangan ini sedang dinonaktifkan dan tidak '
         f'dipergunakan.</div>'
@@ -324,8 +349,7 @@ def verifikasi(payload_id: str) -> str:
     </div>
   </div>
   <div class="person">
-    <div class="nama">{html.escape(nama)}</div>
-    {f'<div class="gelar">{html.escape(gelar)}</div>' if gelar else ''}
+    <div class="nama">{html.escape(nama_full)}</div>
   </div>
   <div class="sig">
     {sig_html}
@@ -337,7 +361,7 @@ def verifikasi(payload_id: str) -> str:
   </div>
 </main>
 </div>"""
-    return page(f"{nama} — {TITLE}", body)
+    return page(f"{nama_full} — {TITLE}", body)
 
 
 @app.exception_handler(HTTPException)
