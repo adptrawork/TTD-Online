@@ -241,10 +241,6 @@ input[type=text]{font-family:var(--font);font-size:.9rem;padding:.65rem .85rem;
 border:1px solid var(--border);border-radius:.75rem;background:#fcfdfc;color:var(--ink);
 outline:none;transition:border-color .2s}
 input[type=text]:focus{border-color:var(--accent)}
-.file{display:flex;align-items:center;gap:.6rem}
-.file input[type=file]{font-size:.8rem;color:var(--ink2);max-width:220px}
-.file .fname{font-family:var(--mono);font-size:.68rem;color:var(--ink3);
-white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
 .rm{border:0;background:transparent;color:var(--ink3);font-size:1.1rem;cursor:pointer;
 padding:.3rem;border-radius:.5rem;line-height:1}
 .rm:hover{color:#dc2626;background:#fef2f2}
@@ -284,8 +280,23 @@ font-family:var(--font);transition:all .2s}
 .m-panel.on{display:block}
 .sig-canvas-wrap{display:grid;gap:.5rem}
 .sig-canvas{border:2px dashed var(--border);border-radius:1rem;background:#fff;
-touch-action:none;width:100%;max-width:560px;height:190px;cursor:crosshair}
+touch-action:none;width:100%;height:200px;cursor:crosshair;display:block;
+box-sizing:border-box;image-rendering:auto}
 .sig-canvas.has-ink{border-style:solid;border-color:var(--accent)}
+.dropzone{border:2px dashed var(--border);border-radius:1rem;background:#fcfdfc;
+padding:1.1rem 1.25rem;cursor:pointer;display:grid;place-items:center;gap:.3rem;
+transition:all .2s;text-align:center}
+.dropzone:hover{border-color:var(--accent);background:rgba(5,150,105,.04)}
+.dropzone.drag{border-color:var(--accent);background:rgba(5,150,105,.08)}
+.dropzone .dz-ico{color:var(--ink3);width:1.4rem;height:1.4rem}
+.dropzone .dz-main{font-size:.85rem;font-weight:600;color:var(--ink2)}
+.dropzone .dz-sub{font-size:.72rem;color:var(--ink3)}
+.dropzone.has-file{border-style:solid;border-color:var(--accent)}
+.dropzone .dz-file{display:none;font-family:var(--mono);font-size:.72rem;color:var(--accent-ink);
+word-break:break-all;margin-top:.2rem}
+.dropzone.has-file .dz-main,.dropzone.has-file .dz-ico{display:none}
+.dropzone.has-file .dz-sub{display:none}
+.dropzone.has-file .dz-file{display:block}
 .type-controls{display:grid;gap:.55rem}
 .type-controls input[type=text],.type-controls select{font-family:var(--font);
 font-size:.9rem;padding:.6rem .85rem;border:1px solid var(--border);border-radius:.75rem;
@@ -379,11 +390,14 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
       <button class="m-method" data-m="type" type="button" onclick="setEditMethod('type')">Type</button>
     </div>
     <div class="m-panel" data-m="upload">
-      <div class="file">
-        <input type="file" id="editFile" accept="image/*">
-        <span class="fname" id="editFname"></span>
-      </div>
-      <span class="e-hint">Pilih file untuk mengganti gambar (versi baru).</span>
+      <label class="dropzone">
+        <input type="file" id="editFile" accept="image/*" style="display:none">
+        <svg class="dz-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+        <span class="dz-main">Tarik file ke sini atau klik untuk pilih</span>
+        <span class="dz-sub">jpg / png — ganti gambar (versi baru)</span>
+        <span class="dz-file"></span>
+      </label>
+      <span class="e-hint" style="display:block;margin-top:.4rem">Kosongkan jika hanya mengubah nama/gelar.</span>
     </div>
     <div class="m-panel" data-m="draw">
       <div class="sig-canvas-wrap">
@@ -450,12 +464,50 @@ const FONTS = {
   "allura": "'Allura'",
   "pacifico": "'Pacifico'"
 };
+function resizeSigCanvas(canvas) {
+  // Sinkronkan ukuran internal canvas dgn ukuran tampil (× devicePixelRatio)
+  // supaya koordinat goresan SignaturePad persis sejajar dgn kursor.
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const ratio = Math.max(window.devicePixelRatio || 1, 1);
+  canvas.width = Math.round(rect.width * ratio);
+  canvas.height = Math.round(rect.height * ratio);
+  canvas.getContext("2d").setTransform(ratio, 0, 0, ratio, 0, 0);
+}
 function sigPadInit(canvas) {
   // inisialisasi signature_pad dengan dotSize minimum agar goresan halus
   try {
+    resizeSigCanvas(canvas);
     return new SignaturePad(canvas, { penColor: "#1e3a5f",
       minWidth: 1, maxWidth: 3, dotSize: 1.2 });
   } catch (e) { return null; }
+}
+function bindDropzone(label, input, fileSpan) {
+  // klik label -> buka file picker (input hidden)
+  label.addEventListener("click", e => { if (e.target !== input) input.click(); });
+  input.addEventListener("change", () => {
+    const f = input.files[0];
+    fileSpan.textContent = f ? f.name : "";
+    label.classList.toggle("has-file", !!f);
+  });
+  // drag & drop
+  ["dragenter", "dragover"].forEach(ev => label.addEventListener(ev, e => {
+    e.preventDefault(); label.classList.add("drag");
+  }));
+  ["dragleave", "drop"].forEach(ev => label.addEventListener(ev, e => {
+    e.preventDefault(); label.classList.remove("drag");
+  }));
+  label.addEventListener("drop", e => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) {
+      input.files = null;
+      // assign file secara manual
+      const dt = new DataTransfer();
+      dt.items.add(f);
+      input.files = dt.files;
+      input.dispatchEvent(new Event("change"));
+    }
+  });
 }
 function setRowMethod(row, method) {
   row.querySelectorAll(".m-method").forEach(b =>
@@ -500,11 +552,13 @@ function addRow(nama="", gelar="", method="upload") {
       <button class="m-method" data-m="type" type="button" onclick="setRowMethod(this.closest('.row'),'type')">Type</button>
     </div>
     <div class="m-panel" data-m="upload">
-      <div class="file">
-        <input type="file" accept="image/*" class="i-file">
-        <span class="fname"></span>
-      </div>
-      <div class="hint">jpg/png — tinta otomatis diekstrak, background dibuang.</div>
+      <label class="dropzone">
+        <input type="file" accept="image/*" class="i-file" style="display:none">
+        <svg class="dz-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+        <span class="dz-main">Tarik file ke sini atau klik untuk pilih</span>
+        <span class="dz-sub">jpg / png — tinta otomatis diekstrak</span>
+        <span class="dz-file"></span>
+      </label>
     </div>
     <div class="m-panel" data-m="draw">
       <div class="sig-canvas-wrap">
@@ -535,14 +589,12 @@ function addRow(nama="", gelar="", method="upload") {
       </div>
     </div>
     <button class="rm" onclick="this.closest('.row').remove()" type="button" title="Hapus baris">&times;</button>`;
-  d.querySelector(".i-file").addEventListener("change", e => {
-    const f = e.target.files[0];
-    d.querySelector(".fname").textContent = f ? f.name : "";
-  });
   d.querySelector(".t-size").addEventListener("input", e => {
     e.target.closest(".row").querySelector(".t-size-lbl").textContent = e.target.value;
   });
   document.getElementById("rows").appendChild(d);
+  const dz = d.querySelector(".dropzone");
+  if (dz) bindDropzone(dz, d.querySelector(".i-file"), d.querySelector(".dz-file"));
   setRowMethod(d, method);
   d.querySelector(".i-nama").focus();
 }
@@ -692,7 +744,12 @@ async function editRow(pid) {
   document.getElementById("editNama").value = p.nama_display;
   document.getElementById("editGelar").value = p.gelar || "";
   document.getElementById("editFile").value = "";
-  document.getElementById("editFname").textContent = "";
+  const editDz = document.querySelector("#editDlg .dropzone");
+  if (editDz) {
+    editDz.classList.remove("has-file");
+    const fs = editDz.querySelector(".dz-file");
+    if (fs) fs.textContent = "";
+  }
   const cv = document.getElementById("editCanvas");
   if (cv && cv._pad) cv._pad.clear();
   cv.classList.remove("has-ink");
@@ -808,6 +865,19 @@ async function loadLogs() {
 }
 
 addRow(); loadList(); loadAudit(); loadLogs();
+const editDzLabel = document.querySelector("#editDlg .dropzone");
+if (editDzLabel) bindDropzone(editDzLabel, document.getElementById("editFile"),
+  editDzLabel.querySelector(".dz-file"));
+// saat layar di-resize: sinkronkan ulang ukuran canvas + pertahankan goresan
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".sig-canvas").forEach(cv => {
+    if (!cv._pad) return;
+    const hasInk = !cv._pad.isEmpty();
+    const data = hasInk ? cv._pad.toData() : null;
+    resizeSigCanvas(cv);
+    if (hasInk && data) cv._pad.fromData(data);
+  });
+});
 setInterval(loadLogs, 15000);
 </script>
 </body></html>"""
