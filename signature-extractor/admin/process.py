@@ -4,19 +4,39 @@ Mengubah file gambar TTD (jpg/png) menjadi PNG transparan (hanya tinta),
 di-upscale 3x (LANCZOS4) + unsharp mask agar tajam — hasil yang sama dengan
 pipeline signature-extractor.
 
+Selain itu menyediakan:
+  * trim_transparent()   — potong border transparan (untuk hasil draw/type).
+  * render_type_png()    — render teks nama dengan font tanda tangan (Pillow)
+                           menjadi PNG RGBA transparan (mode "Type").
+
 Output: bytes PNG RGBA transparan + resolusi akhir.
 """
 from __future__ import annotations
 
 import io
+from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 UPSCALE = 3
 SHARPEN_AMOUNT = 1.2
 SHARPEN_SIGMA = 1.5
+
+FONTS_DIR = Path(__file__).resolve().parent / "fonts"
+
+# Font tanda tangan (mode Type) — TTF Google Fonts (OFL) di-bundle saat build.
+# key = id font yang dipakai frontend; value = nama file TTF.
+TYPE_FONTS: dict[str, str] = {
+    "dancing-script": "DancingScript.ttf",
+    "great-vibes": "GreatVibes-Regular.ttf",
+    "allura": "Allura-Regular.ttf",
+    "pacifico": "Pacifico-Regular.ttf",
+}
+
+TYPE_INK = (30, 58, 95, 255)  # navy tua (RGBA) — warna tinta tanda tangan
 
 
 def _remove_grid_lines(mask: np.ndarray) -> np.ndarray:
@@ -105,3 +125,73 @@ def png_size(png_bytes: bytes) -> tuple[int, int]:
         return (0, 0)
     h, w = img.shape[:2]
     return (w, h)
+
+
+# --------------------------------------------------------------------------
+# Draw & Type — input sudah transparan/vektor, tidak perlu OpenCV threshold
+# --------------------------------------------------------------------------
+
+def trim_transparent(png_bytes: bytes, pad: int = 12) -> Optional[bytes]:
+    """Potong border transparan dari PNG RGBA, sisakan tinta + padding.
+
+    Digunakan untuk hasil canvas (signature_pad) dan render Type agar tampil
+    rapi di verifier. Mengembalikan None jika gambar kosong/tidak valid.
+    """
+    try:
+        img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    except Exception:
+        return None
+    bbox = img.getbbox()
+    if bbox is None:
+        return None  # kosong / semua transparan
+    crop = img.crop(bbox)
+    w, h = crop.size
+    # canvas kecil di-upscale 2x agar tajam & konsisten dgn mode lain
+    if max(w, h) < 400:
+        factor = max(1, 400 // max(w, h))
+        if factor > 1:
+            crop = crop.resize((w * factor, h * factor), Image.Resampling.LANCZOS)
+            w, h = crop.size
+    out = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
+    out.paste(crop, (pad, pad))
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def render_type_png(text: str, font_id: str, size: int = 96,
+                    pad: int = 16) -> Optional[bytes]:
+    """Render teks nama dgn font tanda tangan -> PNG RGBA transparan.
+
+    Mengukur bbox teks (Pillow textbbox), menggambar dengan tinta navy tua,
+    menambah padding, dan mengembalikan bytes PNG. Mengembalikan None bila
+    font tidak ditemukan atau teks kosong.
+    """
+    text = (text or "").strip()
+    if not text:
+        return None
+    font_file = TYPE_FONTS.get(font_id)
+    if font_file is None:
+        return None
+    path = FONTS_DIR / font_file
+    if not path.exists():
+        return None
+    try:
+        font = ImageFont.truetype(str(path), size)
+    except Exception:
+        return None
+
+    tmp = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tmp)
+    left, top, right, bottom = d.textbbox((0, 0), text, font=font)
+    w = int(round(right - left))
+    h = int(round(bottom - top))
+    if w <= 0 or h <= 0:
+        return None
+
+    img = Image.new("RGBA", (w + pad * 2, h + pad * 2), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(img)
+    dd.text((pad - left, pad - top), text, font=font, fill=TYPE_INK)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    return buf.getvalue()

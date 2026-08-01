@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir \
 
 WORKDIR /app
 COPY app.py process.py db.py migrate.py .
+COPY static/ static/
+COPY fonts/ fonts/
 
 # PUBLIC_BASE_URL: URL publik verifier, dipakai utk QR & link.
 # Contoh: http://dev.rsudkotajambi.id/ttd  atau  https://ttd.rsudkotajambi.id

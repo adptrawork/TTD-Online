@@ -297,6 +297,11 @@ def verifikasi(payload_id: str) -> str:
         '<span class="status" style="background:rgba(220,38,38,.07);color:#b91c1c">'
         '<span class="dot" style="background:#dc2626"></span>Tidak aktif</span>'
     )
+    method = str(p.get("method", "upload"))
+    method_label = {"upload": "diunggah", "draw": "digambar",
+                    "type": "diketik"}.get(method, method)
+    method_html = (f'<span class="no" style="border-color:var(--accent);'
+                   f'color:var(--accent-ink)">{method_label}</span>')
     status_meta = "AKTIF &middot; terverifikasi" if aktif else "NONAKTIF &middot; dinonaktifkan"
     sig_html = (f'<img src="{html.escape(payload_id)}/img" '
                 f'alt="Citra tanda tangan {html.escape(nama)}">') if aktif else (
@@ -313,7 +318,10 @@ def verifikasi(payload_id: str) -> str:
 <main class="result">
   <div class="result-head">
     {status_html}
-    <span class="no">#{p['no']:02d}</span>
+    <div style="display:flex;gap:.5rem;align-items:center">
+      {method_html}
+      <span class="no">#{p['no']:02d}</span>
+    </div>
   </div>
   <div class="person">
     <div class="nama">{html.escape(nama)}</div>

@@ -43,7 +43,8 @@ from fastapi.responses import HTMLResponse, Response
 import qrcode
 from qrcode.constants import ERROR_CORRECT_M
 
-from process import process_image, png_size
+from process import (TYPE_FONTS, process_image, png_size, render_type_png,
+                     trim_transparent)
 
 from db import (_lock, build_cache, connect, create_signature, delete_signature,
                 ensure_folders, get_audit, get_signature, get_versions,
@@ -161,6 +162,37 @@ def write_full_metadata(pid: str) -> None:
     write_metadata(pid)
 
 
+def finalize_upload(pid: str, row_id: str, version: int,
+                    png: bytes, original: bytes, ext: str,
+                    source: str, method: str) -> tuple[int, int]:
+    """Simpan file + perbaiki rel path di DB + cache + metadata (aksi baru/update).
+
+    Mengembalikan (w, h) PNG yang tersimpan.
+    """
+    paths = store_upload(pid, png, original, ext, source)
+    with _lock():
+        with connect() as conn:
+            conn.execute(
+                "UPDATE signatures SET original_rel=?, processed_rel=? WHERE pid=?",
+                (paths["original"], paths["processed"], pid))
+            conn.execute(
+                "UPDATE signature_versions SET original_rel=?, processed_rel=? "
+                "WHERE signature_id=? AND version=?",
+                (paths["original"], paths["processed"], row_id, version))
+    write_full_metadata(pid)
+    build_cache()
+    return png_size(png)
+
+
+def _source_label(method: str, source: str) -> str:
+    """Label sumber untuk log/audit per metode."""
+    if method == "draw":
+        return "draw (canvas)"
+    if method == "type":
+        return f"type ({source})"
+    return source
+
+
 # --------------------------------------------------------------------------
 # halaman admin
 # --------------------------------------------------------------------------
@@ -171,6 +203,11 @@ PAGE = """<!DOCTYPE html>
 <title>Signature Management — Admin</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<style>
+@font-face{font-family:'Dancing Script';src:url('static/fonts/DancingScript.ttf') format('truetype')}
+@font-face{font-family:'Great Vibes';src:url('static/fonts/GreatVibes-Regular.ttf') format('truetype')}
+@font-face{font-family:'Allura';src:url('static/fonts/Allura-Regular.ttf') format('truetype')}
+@font-face{font-family:'Pacifico';src:url('static/fonts/Pacifico-Regular.ttf') format('truetype')}
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#f9fafb;--surface:#fff;--border:#e2e8f0;--ink:#0f172a;--ink2:#475569;
@@ -229,12 +266,37 @@ cursor:pointer;font-family:var(--font);font-weight:600;transition:opacity .2s}
 .btn-mini:active{transform:scale(.97)}
 .b-off{background:var(--danger-soft);color:var(--danger)}
 .b-off:hover{opacity:.85}
+.b-up{background:var(--accent-soft);color:var(--accent-ink)}
+.b-up:hover{opacity:.85}
 .b-on{background:var(--accent);color:#fff}
 .b-on:hover{opacity:.85}
 .b-del{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
 .b-del:hover{background:#fee2e2}
 .b-edit{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
 .b-edit:hover{background:#dbeafe}
+.b-draw{background:#fdf4ff;color:#a21caf;border:1px solid #f5d0fe}
+.b-type{background:#fffbeb;color:#b45309;border:1px solid #fde68a}
+.methods{display:flex;gap:.4rem;flex-wrap:wrap;margin:.4rem 0}
+.m-method{padding:.32rem .8rem;border-radius:999px;border:1px solid var(--border);
+background:#fff;color:var(--ink2);font-size:.75rem;font-weight:600;cursor:pointer;
+font-family:var(--font);transition:all .2s}
+.m-method.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.m-panel{display:none;margin-top:.5rem}
+.m-panel.on{display:block}
+.sig-canvas-wrap{display:grid;gap:.5rem}
+.sig-canvas{border:2px dashed var(--border);border-radius:1rem;background:#fff;
+touch-action:none;width:100%;max-width:560px;height:190px;cursor:crosshair}
+.sig-canvas.has-ink{border-style:solid;border-color:var(--accent)}
+.type-controls{display:grid;gap:.55rem}
+.type-controls input[type=text],.type-controls select{font-family:var(--font);
+font-size:.9rem;padding:.6rem .85rem;border:1px solid var(--border);border-radius:.75rem;
+background:#fcfdfc;color:var(--ink);outline:none;transition:border-color .2s}
+.type-controls input:focus,.type-controls select:focus{border-color:var(--accent)}
+.type-prev{border:1px dashed var(--border);border-radius:1rem;background:#fff;
+min-height:96px;display:grid;place-items:center;padding:1rem;overflow:hidden}
+.type-prev span{color:var(--ink);line-height:1.2;text-align:center;word-break:break-word}
+input[type=range]{accent-color:var(--accent)}
+.hint{font-size:.7rem;color:var(--ink3);margin-top:.25rem}
 dialog{border:0;border-radius:1.25rem;box-shadow:0 25px 60px -15px rgba(15,23,42,.35);
 width:min(30rem,92vw);padding:1.5rem;font-family:var(--font);margin:auto;inset:0;
 max-height:90dvh;overflow:auto}
@@ -284,13 +346,13 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 
 <div class="card">
   <h2>Tambah tanda tangan baru</h2>
-  <p class="desc">Isi nama + gelar dan pilih gambar TTD (jpg/png). Bisa tambah
-  banyak sekaligus — tiap baris otomatis diproses, dibuatkan pid (tXX) dari
-  urutan AUTOINCREMENT, QR dibuat on-the-fly, dan langsung aktif di verifikasi.</p>
+  <p class="desc">Isi nama + gelar, pilih <b>jenis</b> (Upload gambar / Draw di
+  canvas / Type dengan font tanda tangan), lalu Simpan. Tiap baris diproses
+  otomatis, dibuatkan pid (tXX), QR on-the-fly, dan langsung aktif di verifikasi.</p>
   <div id="rows"></div>
   <div class="acts">
     <button class="btn btn-ghost" onclick="addRow()" type="button">+ Tambah baris</button>
-    <button class="btn btn-primary" id="uploadBtn" onclick="upload()" type="button">Upload &amp; Daftarkan</button>
+    <button class="btn btn-primary" id="uploadBtn" onclick="upload()" type="button">Simpan</button>
   </div>
   <div id="res"></div>
 </div>
@@ -299,7 +361,7 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
   <h2>Arsip tanda tangan</h2>
   <p class="desc">Ganti gambar = versi baru (versi lama otomatis di-archive) — lewat
   tombol <b>edit</b>. Nonaktifkan = soft delete (tetap tersimpan, tidak ditampilkan publik).</p>
-  <table><thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Versi</th>
+  <table><thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Jenis</th><th>Versi</th>
   <th>QR</th><th>Tanda tangan</th><th>Aksi</th></tr></thead>
   <tbody id="tbody"></tbody></table>
 </div>
@@ -311,10 +373,49 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
     <input type="text" id="editNama" placeholder="Nama pegawai"></div>
   <div class="fld"><label for="editGelar">Gelar (opsional)</label>
     <input type="text" id="editGelar" placeholder="mis. S.Kep, Ns"></div>
-  <div class="fld"><label for="editFile">Ganti gambar TTD (opsional)</label>
-    <input type="file" id="editFile" accept="image/*">
-    <span class="e-hint">Kosongkan jika hanya mengubah nama/gelar. Jika diisi,
-    gambar lama di-archive dan versi baru dibuat (nomor versi bertambah).</span></div>
+  <div class="fld"><label>Ganti tanda tangan (opsional)</label>
+    <div class="methods" id="editMethods">
+      <button class="m-method" data-m="upload" type="button" onclick="setEditMethod('upload')">Upload</button>
+      <button class="m-method" data-m="draw" type="button" onclick="setEditMethod('draw')">Draw</button>
+      <button class="m-method" data-m="type" type="button" onclick="setEditMethod('type')">Type</button>
+    </div>
+    <div class="m-panel" data-m="upload">
+      <div class="file">
+        <input type="file" id="editFile" accept="image/*">
+        <span class="fname" id="editFname"></span>
+      </div>
+      <span class="e-hint">Pilih file untuk mengganti gambar (versi baru).</span>
+    </div>
+    <div class="m-panel" data-m="draw">
+      <div class="sig-canvas-wrap">
+        <canvas class="sig-canvas" id="editCanvas" height="380" width="1120"></canvas>
+        <div class="acts" style="margin-top:.4rem">
+          <button class="btn btn-ghost" type="button" onclick="clearEditSig()">Bersihkan</button>
+        </div>
+        <span class="e-hint">Gambar ulang tanda tangan — versi baru.</span>
+      </div>
+    </div>
+    <div class="m-panel" data-m="type">
+      <div class="type-controls">
+        <input type="text" id="editTypeText" placeholder="Teks tanda tangan" oninput="updateEditPreview()">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+          <select id="editTypeFont" onchange="updateEditPreview()">
+            <option value="dancing-script">Dancing Script</option>
+            <option value="great-vibes">Great Vibes</option>
+            <option value="allura">Allura</option>
+            <option value="pacifico">Pacifico</option>
+          </select>
+          <div style="display:flex;align-items:center;gap:.6rem">
+            <input type="range" min="40" max="160" value="96" id="editTypeSize" oninput="updateEditPreview()">
+            <span class="t-size-lbl" id="editTypeSizeLbl" style="font-family:var(--mono);font-size:.75rem;color:var(--ink3)">96</span>
+          </div>
+        </div>
+        <div class="type-prev"><span class="t-prev-text" id="editTypePrev"></span></div>
+        <span class="e-hint">Ketik teks + font — versi baru.</span>
+      </div>
+    </div>
+    <span class="e-hint" id="editNoImageHint" style="display:none">Kosongkan semua jika hanya mengubah nama/gelar.</span>
+  </div>
   <div class="dacts">
     <button class="btn btn-ghost" onclick="document.getElementById('editDlg').close()">Batal</button>
     <button class="btn btn-primary" id="editSave" onclick="saveEdit()">Simpan</button>
@@ -338,12 +439,54 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 </div>
 </div>
 
+<script src="static/js/signature_pad.min.js"></script>
 <script>
 // BASE otomatis dari path halaman (mis. /ttd-admin saat diakses lewat nginx,
 // atau "" saat container diakses langsung) — semua fetch jadi benar di dua mode.
 const BASE = location.pathname.replace(/\\/+$/, "");
 let rows = 0;
-function addRow(nama="", gelar="") {
+const FONTS = {
+  "dancing-script": "'Dancing Script'",
+  "great-vibes": "'Great Vibes'",
+  "allura": "'Allura'",
+  "pacifico": "'Pacifico'"
+};
+function sigPadInit(canvas) {
+  // inisialisasi signature_pad dengan dotSize minimum agar goresan halus
+  try {
+    return new SignaturePad(canvas, { penColor: "#1e3a5f",
+      minWidth: 1, maxWidth: 3, dotSize: 1.2 });
+  } catch (e) { return null; }
+}
+function setRowMethod(row, method) {
+  row.querySelectorAll(".m-method").forEach(b =>
+    b.classList.toggle("on", b.dataset.m === method));
+  row.querySelectorAll(".m-panel").forEach(p =>
+    p.classList.toggle("on", p.dataset.m === method));
+  if (method === "draw") {
+    const cv = row.querySelector(".sig-canvas");
+    if (cv && !cv.dataset.pad) {
+      const pad = sigPadInit(cv);
+      if (pad) { cv.dataset.pad = "1"; cv._pad = pad; }
+    }
+  }
+  if (method === "type") updateTypePreview(row);
+}
+function clearSig(row) {
+  const cv = row.querySelector(".sig-canvas");
+  if (cv && cv._pad) cv._pad.clear();
+  cv.classList.remove("has-ink");
+}
+function updateTypePreview(row) {
+  const txt = row.querySelector(".t-text").value;
+  const font = row.querySelector(".t-font").value;
+  const size = row.querySelector(".t-size").value;
+  const span = row.querySelector(".t-prev-text");
+  span.style.fontFamily = FONTS[font] || "serif";
+  span.style.fontSize = size + "px";
+  span.textContent = txt || "Preview tanda tangan";
+}
+function addRow(nama="", gelar="", method="upload") {
   rows++;
   const d = document.createElement("div");
   d.className = "row"; d.id = "row" + rows;
@@ -351,9 +494,45 @@ function addRow(nama="", gelar="") {
     <div class="fields">
       <input type="text" placeholder="Nama pegawai *" value="${esc(nama)}" class="i-nama">
       <input type="text" placeholder="Gelar (opsional)" value="${esc(gelar)}" class="i-gelar">
+    </div>
+    <div class="methods">
+      <button class="m-method" data-m="upload" type="button" onclick="setRowMethod(this.closest('.row'),'upload')">Upload</button>
+      <button class="m-method" data-m="draw" type="button" onclick="setRowMethod(this.closest('.row'),'draw')">Draw</button>
+      <button class="m-method" data-m="type" type="button" onclick="setRowMethod(this.closest('.row'),'type')">Type</button>
+    </div>
+    <div class="m-panel" data-m="upload">
       <div class="file">
         <input type="file" accept="image/*" class="i-file">
         <span class="fname"></span>
+      </div>
+      <div class="hint">jpg/png — tinta otomatis diekstrak, background dibuang.</div>
+    </div>
+    <div class="m-panel" data-m="draw">
+      <div class="sig-canvas-wrap">
+        <canvas class="sig-canvas" height="380" width="1120"></canvas>
+        <div class="acts" style="margin-top:.4rem">
+          <button class="btn btn-ghost" type="button" onclick="clearSig(this.closest('.row'))">Bersihkan</button>
+        </div>
+        <div class="hint">Tanda tangan di sini — mouse / jari / stylus.</div>
+      </div>
+    </div>
+    <div class="m-panel" data-m="type">
+      <div class="type-controls">
+        <input type="text" class="t-text" placeholder="Teks tanda tangan (default: nama)" value="${esc(nama)}" oninput="updateTypePreview(this.closest('.row'))">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.6rem">
+          <select class="t-font" onchange="updateTypePreview(this.closest('.row'))">
+            <option value="dancing-script">Dancing Script</option>
+            <option value="great-vibes">Great Vibes</option>
+            <option value="allura">Allura</option>
+            <option value="pacifico">Pacifico</option>
+          </select>
+          <div style="display:flex;align-items:center;gap:.6rem">
+            <input type="range" min="40" max="160" value="96" class="t-size" oninput="updateTypePreview(this.closest('.row'))">
+            <span class="t-size-lbl" style="font-family:var(--mono);font-size:.75rem;color:var(--ink3)">96</span>
+          </div>
+        </div>
+        <div class="type-prev"><span class="t-prev-text"></span></div>
+        <div class="hint">Font di-render server (Pillow) menjadi PNG transparan.</div>
       </div>
     </div>
     <button class="rm" onclick="this.closest('.row').remove()" type="button" title="Hapus baris">&times;</button>`;
@@ -361,43 +540,100 @@ function addRow(nama="", gelar="") {
     const f = e.target.files[0];
     d.querySelector(".fname").textContent = f ? f.name : "";
   });
+  d.querySelector(".t-size").addEventListener("input", e => {
+    e.target.closest(".row").querySelector(".t-size-lbl").textContent = e.target.value;
+  });
   document.getElementById("rows").appendChild(d);
+  setRowMethod(d, method);
   d.querySelector(".i-nama").focus();
 }
 function esc(s){return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
-function setBtn(on, txt){const b=document.getElementById("uploadBtn");b.disabled=on;b.textContent=txt||(on?"Memproses…":"Upload &amp; Daftarkan")}
+function setBtn(on, txt){const b=document.getElementById("uploadBtn");b.disabled=on;b.textContent=txt||(on?"Memproses…":"Simpan")}
 function msg(item, r) {
   return r.ok
     ? `<span><b>${esc(r.nama)}</b> &rarr; ${r.pid} v${r.version} (${r.w}x${r.h})</span>
        <a class="link" href="${r.url}" target="_blank">buka &darr;</a>`
     : `<span>${esc(r.nama || "(tanpa nama)")}</span><span>${esc(r.error || "gagal")}</span>`;
 }
-
-async function upload() {
-  const items = [...document.querySelectorAll(".row")].map(r => ({
-    nama: r.querySelector(".i-nama").value.trim(),
-    gelar: r.querySelector(".i-gelar").value.trim(),
-    file: r.querySelector(".i-file").files[0]
-  })).filter(i => i.nama || i.file);
-  if (!items.length) return alert("Isi minimal satu baris (nama + file).");
-  const bad = items.filter(i => !i.nama || !i.file);
-  if (bad.length) return alert("Setiap baris wajib punya nama dan file gambar.");
-  setBtn(true);
+function rowToFormData(row) {
+  const nama = row.querySelector(".i-nama").value.trim();
+  const gelar = row.querySelector(".i-gelar").value.trim();
+  const method = [...row.querySelectorAll(".m-method")].find(b => b.classList.contains("on")).dataset.m;
   const fd = new FormData();
-  items.forEach(i => { fd.append("nama", i.nama); fd.append("gelar", i.gelar); fd.append("file", i.file); });
-  const res = await fetch(BASE + "/api/upload", { method:"POST", body: fd });
-  const data = await res.json();
-  setBtn(false);
+  fd.append("nama", nama);
+  fd.append("gelar", gelar);
+  fd.append("method", method);
+  if (method === "draw") {
+    const cv = row.querySelector(".sig-canvas");
+    if (!cv || !cv._pad) return { fd, nama, method, ok: false, err: "canvas belum siap" };
+    if (cv._pad.isEmpty()) return { fd, nama, method, ok: false, err: "tanda tangan belum digambar" };
+    return { fd, nama, method, ok: true, cv };
+  }
+  if (method === "type") {
+    fd.append("text", row.querySelector(".t-text").value.trim());
+    fd.append("font", row.querySelector(".t-font").value);
+    fd.append("size", row.querySelector(".t-size").value);
+    return { fd, nama, method, ok: true };
+  }
+  const f = row.querySelector(".i-file").files[0];
+  if (!f) return { fd, nama, method, ok: false, err: "file belum dipilih" };
+  fd.append("file", f);
+  return { fd, nama, method, ok: true };
+}
+async function upload() {
+  const rowsEl = [...document.querySelectorAll(".row")];
+  if (!rowsEl.length) return alert("Tambah minimal satu baris.");
+  // validasi: tiap baris wajib nama + payload sesuai metode
+  for (const r of rowsEl) {
+    const nama = r.querySelector(".i-nama").value.trim();
+    if (!nama) return alert("Setiap baris wajib punya nama.");
+  }
+  setBtn(true);
   const box = document.getElementById("res");
   box.style.display = "block"; box.innerHTML = "";
-  (data.results || []).forEach(r => {
+  let failed = 0;
+  for (const row of rowsEl) {
+    const item = rowToFormData(row);
+    if (!item.ok) {
+      failed++;
+      const el = document.createElement("div");
+      el.className = "item err";
+      el.innerHTML = `<span>${esc(item.nama || "(tanpa nama)")}</span><span>${esc(item.err)}</span>`;
+      box.appendChild(el);
+      continue;
+    }
+    if (item.method === "draw") {
+      // toBlob async — tunggu blob masuk
+      const fd = await new Promise(res => {
+        const cv = item.cv;
+        cv.toBlob(blob => {
+          const f = item.fd; f.append("file", blob, "signature.png"); res(f);
+        }, "image/png");
+      });
+      await postSign(fd, item.nama, box);
+    } else {
+      await postSign(item.fd, item.nama, box);
+    }
+  }
+  setBtn(false);
+  document.getElementById("rows").innerHTML = ""; rows = 0;
+  loadList(); loadAudit();
+  if (failed) alert(failed + " baris gagal — periksa hasil di bawah.");
+}
+async function postSign(fd, nama, box) {
+  try {
+    const res = await fetch(BASE + "/api/sign", { method:"POST", body: fd });
+    const r = await res.json();
     const el = document.createElement("div");
     el.className = "item " + (r.ok ? "ok" : "err");
     el.innerHTML = msg(el, r);
     box.appendChild(el);
-  });
-  document.getElementById("rows").innerHTML = ""; rows = 0;
-  loadList(); loadAudit();
+  } catch (e) {
+    const el = document.createElement("div");
+    el.className = "item err";
+    el.innerHTML = `<span>${esc(nama)}</span><span>gagal: ${esc(e.message)}</span>`;
+    box.appendChild(el);
+  }
 }
 
 async function act(pid, action) {
@@ -414,6 +650,38 @@ async function del(pid, nama) {
 }
 
 let editPid = null;
+let editPad = null;
+function setEditMethod(method) {
+  document.querySelectorAll("#editMethods .m-method").forEach(b =>
+    b.classList.toggle("on", b.dataset.m === method));
+  document.querySelectorAll("#editDlg .m-panel").forEach(p =>
+    p.classList.toggle("on", p.dataset.m === method));
+  if (method === "draw") {
+    const cv = document.getElementById("editCanvas");
+    if (cv && !cv._pad) {
+      const pad = sigPadInit(cv);
+      if (pad) { cv._pad = pad; editPad = pad; }
+    }
+  }
+  if (method === "type") updateEditPreview();
+  document.getElementById("editNoImageHint").style.display =
+    method === "upload" ? "block" : "none";
+}
+function clearEditSig() {
+  const cv = document.getElementById("editCanvas");
+  if (cv && cv._pad) cv._pad.clear();
+  cv.classList.remove("has-ink");
+}
+function updateEditPreview() {
+  const txt = document.getElementById("editTypeText").value;
+  const font = document.getElementById("editTypeFont").value;
+  const size = document.getElementById("editTypeSize").value;
+  const span = document.getElementById("editTypePrev");
+  span.style.fontFamily = FONTS[font] || "serif";
+  span.style.fontSize = size + "px";
+  span.textContent = txt || "Preview tanda tangan";
+  document.getElementById("editTypeSizeLbl").textContent = size;
+}
 async function editRow(pid) {
   const r = await fetch(`${BASE}/api/list`);
   const d = await r.json();
@@ -425,6 +693,14 @@ async function editRow(pid) {
   document.getElementById("editNama").value = p.nama_display;
   document.getElementById("editGelar").value = p.gelar || "";
   document.getElementById("editFile").value = "";
+  document.getElementById("editFname").textContent = "";
+  const cv = document.getElementById("editCanvas");
+  if (cv && cv._pad) cv._pad.clear();
+  cv.classList.remove("has-ink");
+  document.getElementById("editTypeText").value = p.nama_display;
+  document.getElementById("editTypeFont").value = "dancing-script";
+  document.getElementById("editTypeSize").value = 96;
+  setEditMethod("upload");
   document.getElementById("editSave").disabled = false;
   document.getElementById("editSave").textContent = "Simpan";
   document.getElementById("editDlg").showModal();
@@ -434,14 +710,38 @@ async function editRow(pid) {
 async function saveEdit() {
   const nama = document.getElementById("editNama").value.trim();
   const gelar = document.getElementById("editGelar").value.trim();
-  const file = document.getElementById("editFile").files[0];
   if (!nama) return alert("Nama tidak boleh kosong");
+  // tentukan metode aktif
+  const active = [...document.querySelectorAll("#editMethods .m-method")]
+    .find(b => b.classList.contains("on")).dataset.m;
   const btn = document.getElementById("editSave");
   btn.disabled = true; btn.textContent = "Menyimpan…";
   const fd = new FormData();
   fd.append("nama", nama);
   fd.append("gelar", gelar);
-  if (file) fd.append("file", file);
+  fd.append("method", active);
+  let hasImage = false;
+  if (active === "upload") {
+    const f = document.getElementById("editFile").files[0];
+    if (f) { fd.append("file", f); hasImage = true; }
+  } else if (active === "draw") {
+    const cv = document.getElementById("editCanvas");
+    if (cv && cv._pad && !cv._pad.isEmpty()) {
+      fd.append("method", "draw");
+      const blob = await new Promise(res => cv.toBlob(b => res(b), "image/png"));
+      if (blob) { fd.append("file", blob, "signature.png"); hasImage = true; }
+    }
+  } else {
+    const txt = document.getElementById("editTypeText").value.trim();
+    if (txt) {
+      fd.append("method", "type");
+      fd.append("text", txt);
+      fd.append("font", document.getElementById("editTypeFont").value);
+      fd.append("size", document.getElementById("editTypeSize").value);
+      hasImage = true;
+    }
+  }
+  if (!hasImage) fd.append("method", "upload"); // metadata-only
   const res = await fetch(`${BASE}/api/${editPid}/edit`, { method:"POST", body: fd });
   const r = await res.json();
   btn.disabled = false; btn.textContent = "Simpan";
@@ -464,10 +764,14 @@ async function loadList() {
     const st = p.status === "active"
       ? `<span class="st on">aktif</span>`
       : `<span class="st off">nonaktif</span>`;
+    const meth = (p.method || "upload") === "upload" ? "upload"
+      : (p.method || "") === "draw" ? "draw" : "type";
+    const methCls = meth === "draw" ? "b-draw" : meth === "type" ? "b-type" : "b-up";
     return `<tr id="tr-${p.pid}" style="${p.status === 'active' ? '' : 'opacity:.55'}">
     <td style="font-family:var(--mono);font-size:.75rem;color:var(--ink3)">${p.no}</td>
     <td><div class="nm">${esc(p.nama_display)}</div><div class="sl">${p.pid} · ${esc(p.gelar || "—")}</div></td>
     <td>${st}</td>
+    <td><span class="btn-mini ${methCls}" style="cursor:default">${meth}</span></td>
     <td><span class="ver">v${p.version}</span></td>
     <td><a class="pill" href="${BASE}/api/${p.pid}/qr" target="_blank">QR</a></td>
     <td><a class="pill" href="${BASE}/api/${p.pid}/img" target="_blank">lihat</a></td>
@@ -532,11 +836,95 @@ def api_list() -> list:
             "gelar": row["title"],
             "status": row["status"],
             "version": row["version"],
+            "method": row["method"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "url": f"{PUBLIC_BASE_URL}/v/{row['pid']}",
         })
     return out
+
+
+def _process_payload(method: str, file: UploadFile | None,
+                     text: str, font: str, size: int) -> tuple[bytes, bytes, str, str]:
+    """Proses payload gambar sesuai metode -> (png, original, ext, source).
+
+    method: upload | draw | type
+    """
+    if method == "draw":
+        raw = file.file.read() if file is not None else b""
+        if not raw:
+            raise ValueError("canvas kosong — gambar tanda tangan dulu")
+        png = trim_transparent(raw)
+        if png is None:
+            raise ValueError("tanda tangan kosong / tidak valid")
+        return png, raw, "png", "draw"
+    if method == "type":
+        txt = (text or "").strip()
+        if not txt:
+            raise ValueError("teks tanda tangan kosong")
+        if font not in TYPE_FONTS:
+            raise ValueError("font tidak dikenal")
+        png = render_type_png(txt, font, size)
+        if png is None:
+            raise ValueError("gagal render teks (font tidak tersedia?)")
+        return png, png, "png", font
+    # upload
+    raw = file.file.read() if file is not None else b""
+    if not raw:
+        raise ValueError("file kosong")
+    png = process_image(raw)
+    if png is None:
+        raise ValueError("tidak terdeteksi tinta / format tidak dikenali")
+    orig_name = (file.filename or "upload.jpg") if file is not None else "upload.jpg"
+    ext = orig_name.rsplit(".", 1)[-1].lower() if "." in orig_name else "jpg"
+    if ext not in ("jpg", "jpeg", "png"):
+        ext = "jpg"
+    return png, raw, ext, orig_name
+
+
+@app.post("/api/sign")
+async def api_sign(nama: str = Form(...),
+                   gelar: str = Form(default=""),
+                   method: str = Form("upload"),
+                   file: UploadFile | None = File(default=None),
+                   text: str = Form(default=""),
+                   font: str = Form(default="dancing-script"),
+                   size: int = Form(96)) -> dict:
+    """Tambah 1 tanda tangan baru dgn metode upload | draw | type.
+
+    - upload: file gambar (jpg/png) -> process_image (OpenCV)
+    - draw:   png dari canvas (blob PNG transparan) -> trim_transparent
+    - type:   text + font + size -> render_type_png (Pillow)
+    Semua ujungnya signature.png -> pipeline sama.
+    """
+    method = method.strip().lower() or "upload"
+    n = ""
+    try:
+        n = nama.strip()
+        g = gelar.strip()
+        if not n:
+            raise ValueError("nama kosong")
+
+        png, original, ext, src = _process_payload(method, file, text, font, size)
+        label = _source_label(method, src)
+
+        row = create_signature(name=n, title=g, slug=slugify(n),
+                               source=label,
+                               original_rel="", processed_rel="",
+                               method=method)
+        pid = row["pid"]
+        w, h = finalize_upload(pid, row["id"], 1, png, original, ext, label,
+                               method)
+        log.info("%s %s | %s | %dx%d | src=%s", method.upper(),
+                 pid, n, w, h, label)
+        return {"ok": True, "nama": n, "pid": pid, "version": 1,
+                "w": w, "h": h, "url": f"{PUBLIC_BASE_URL}/v/{pid}",
+                "method": method}
+    except Exception as exc:
+        log.error("SIGN GAGAL | method=%s | nama=%s | %s\n%s",
+                  method, n, exc, traceback.format_exc())
+        return {"ok": False, "nama": n,
+                "error": str(exc)}
 
 
 @app.post("/api/upload")
@@ -601,24 +989,17 @@ async def api_upload(nama: list[str] = Form(...),
             "failed": len(results) - ok_count, "results": results}
 
 
-def _load_upload_png(f: UploadFile, pid: str, source: str) -> tuple[bytes, bytes]:
-    """Proses file upload -> (png_bytes, original_bytes)."""
-    raw = f.file.read()
-    if not raw:
-        raise ValueError("file kosong")
-    png = process_image(raw)
-    if png is None:
-        raise ValueError("tidak terdeteksi tinta / format tidak dikenali")
-    return png, raw
-
-
 @app.post("/api/{pid}/edit")
 async def api_edit(pid: str,
                    nama: str = Form(...),
                    gelar: str = Form(default=""),
-                   file: UploadFile | None = File(default=None)) -> dict:
-    """Edit metadata (nama + gelar). Jika file ikut dikirim -> upload versi baru
-    sekaligus mengganti nama/gelar (versi lama tetap di-archive)."""
+                   method: str = Form(default=""),
+                   file: UploadFile | None = File(default=None),
+                   text: str = Form(default=""),
+                   font: str = Form(default="dancing-script"),
+                   size: int = Form(96)) -> dict:
+    """Edit metadata (nama + gelar). Jika payload gambar ikut dikirim
+    (upload file / draw canvas / type) -> versi baru + archive versi lama."""
     row = get_signature(pid)
     if row is None:
         raise HTTPException(404, "pid tidak ditemukan")
@@ -626,46 +1007,38 @@ async def api_edit(pid: str,
     if not nama:
         raise HTTPException(422, "nama tidak boleh kosong")
     gelar = gelar.strip()
+    method = (method.strip().lower() or "upload") if method.strip() else ""
     try:
-        if file is not None and (file.filename or "").strip():
-            # ---- edit + ganti gambar: versi baru ----
-            raw = await file.read()
-            if not raw:
-                raise ValueError("file kosong")
-            png = process_image(raw)
-            if png is None:
-                raise ValueError("tidak terdeteksi tinta / format tidak dikenali")
-
-            orig_name = file.filename or "upload.jpg"
-            ext = orig_name.rsplit(".", 1)[-1].lower() if "." in orig_name else "jpg"
-            if ext not in ("jpg", "jpeg", "png"):
-                ext = "jpg"
+        # deteksi apakah ada payload gambar (file OR draw OR type)
+        has_file = file is not None and bool((file.filename or "").strip())
+        has_type = method == "type" and (text or "").strip()
+        has_draw = method == "draw" and file is not None
+        if has_file or has_draw or has_type:
+            if has_draw:
+                m = "draw"
+            elif has_type:
+                m = "type"
+            else:
+                m = "upload"
+            png, original, ext, src = _process_payload(m, file, text, font, size)
+            label = _source_label(m, src)
 
             old_ver = row["version"]
             archive_previous(pid, old_ver)
             updated = update_signature_version(
-                pid, name=nama, title=gelar, source=orig_name,
-                original_rel="", processed_rel="", slug=slugify(nama))
+                pid, name=nama, title=gelar, source=label,
+                original_rel="", processed_rel="", slug=slugify(nama),
+                method=m)
             if updated is None:
                 raise HTTPException(500, "gagal memperbarui versi")
-            paths = store_upload(pid, png, raw, ext, orig_name)
             new_ver = updated["version"]
-            with _lock():
-                with connect() as conn:
-                    conn.execute(
-                        "UPDATE signatures SET original_rel=?, processed_rel=? WHERE pid=?",
-                        (paths["original"], paths["processed"], pid))
-                    conn.execute(
-                        "UPDATE signature_versions SET original_rel=?, processed_rel=? "
-                        "WHERE signature_id=? AND version=?",
-                        (paths["original"], paths["processed"], updated["id"], new_ver))
-            write_full_metadata(pid)
-            build_cache()
-            w, h = png_size(png)
-            log.info("EDIT+UPLOAD %s -> v%d | %s | %dx%d | src=%s",
-                     pid, new_ver, nama, w, h, orig_name)
+            w, h = finalize_upload(pid, updated["id"], new_ver,
+                                   png, original, ext, label, m)
+            log.info("EDIT+%s %s -> v%d | %s | %dx%d | src=%s",
+                     m.upper(), pid, new_ver, nama, w, h, label)
             return {"ok": True, "pid": pid, "version": new_ver, "w": w, "h": h,
-                    "url": f"{PUBLIC_BASE_URL}/v/{pid}", "image_changed": True}
+                    "url": f"{PUBLIC_BASE_URL}/v/{pid}", "image_changed": True,
+                    "method": m}
 
         # ---- edit metadata saja (nama + gelar) ----
         updated = update_profile(pid, nama, gelar, slugify(nama))
@@ -787,3 +1160,30 @@ def api_logs(lines: int = 200) -> dict:
 @app.get("/healthz")
 def healthz() -> dict:
     return {"status": "ok"}
+
+
+# --------------------------------------------------------------------------
+# static assets (signature_pad + font preview) — dilindungi Path Traversal
+# --------------------------------------------------------------------------
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+FONTS_DIR = Path(__file__).resolve().parent / "fonts"
+
+
+@app.get("/static/{kind}/{name}")
+def static_file(kind: str, name: str) -> Response:
+    """Serve file statis: /static/js/<file> dan /static/fonts/<file>.
+
+    Hanya mengizinkan nama file dasar (tanpa path traversal) dari folder
+    yang sudah ditentukan.
+    """
+    if "/" in name or "\\" in name or name in ("", ".", ".."):
+        raise HTTPException(400, "nama file tidak valid")
+    base = STATIC_DIR / "js" if kind == "js" else (FONTS_DIR if kind == "fonts" else None)
+    if base is None:
+        raise HTTPException(404, "folder statis tidak dikenal")
+    path = base / name
+    if not path.exists() or not path.is_file():
+        raise HTTPException(404, "file tidak ditemukan")
+    media = "application/javascript" if kind == "js" else "font/ttf"
+    return Response(path.read_bytes(), media_type=media)

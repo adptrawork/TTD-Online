@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS signatures (
     source         TEXT NOT NULL DEFAULT '',
     original_rel   TEXT NOT NULL DEFAULT '',
     processed_rel  TEXT NOT NULL DEFAULT '',
+    method         TEXT NOT NULL DEFAULT 'upload',
     created_at     TEXT NOT NULL,
     updated_at     TEXT NOT NULL
 );
@@ -59,6 +60,7 @@ CREATE TABLE IF NOT EXISTS signature_versions (
     original_rel   TEXT NOT NULL DEFAULT '',
     processed_rel  TEXT NOT NULL DEFAULT '',
     source         TEXT NOT NULL DEFAULT '',
+    method         TEXT NOT NULL DEFAULT 'upload',
     created_at     TEXT NOT NULL,
     UNIQUE(signature_id, version)
 );
@@ -72,6 +74,20 @@ CREATE TABLE IF NOT EXISTS audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts DESC);
 """
+
+
+def _migrate(conn) -> None:
+    """Migrasi idempoten: tambah kolom method jika belum ada (DB lama)."""
+    def has_col(table: str, col: str) -> bool:
+        cols = [r["name"] for r in conn.execute(f"PRAGMA table_info({table})")]
+        return col in cols
+
+    if not has_col("signatures", "method"):
+        conn.execute(
+            "ALTER TABLE signatures ADD COLUMN method TEXT NOT NULL DEFAULT 'upload'")
+    if not has_col("signature_versions", "method"):
+        conn.execute(
+            "ALTER TABLE signature_versions ADD COLUMN method TEXT NOT NULL DEFAULT 'upload'")
 
 
 # --------------------------------------------------------------------------
@@ -103,6 +119,7 @@ def init_db() -> None:
     SIGNATURES_DIR.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(SCHEMA)
+        _migrate(conn)
 
 
 class _lock:
@@ -134,7 +151,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def create_signature(name: str, title: str, slug: str, source: str,
-                     original_rel: str, processed_rel: str) -> dict:
+                     original_rel: str, processed_rel: str,
+                     method: str = "upload") -> dict:
     """Buat entri baru. pid dialokasikan dari urutan AUTOINCREMENT (tidak reuse)."""
     init_db()
     with _lock():
@@ -146,20 +164,20 @@ def create_signature(name: str, title: str, slug: str, source: str,
             conn.execute(
                 """INSERT INTO signatures
                    (id, seq, pid, name, title, slug, status, version,
-                    source, original_rel, processed_rel, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?, 'active', 1, ?,?,?,?,?)""",
+                    source, original_rel, processed_rel, method, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?, 'active', 1, ?,?,?,?,?,?)""",
                 (sid, seq, pid, name, title, slug, source,
-                 original_rel, processed_rel, ts, ts),
+                 original_rel, processed_rel, method, ts, ts),
             )
             conn.execute(
                 """INSERT INTO signature_versions
-                   (signature_id, version, original_rel, processed_rel, source, created_at)
-                   VALUES (?,1,?,?,?,?)""",
-                (sid, original_rel, processed_rel, source, ts),
+                   (signature_id, version, original_rel, processed_rel, source, method, created_at)
+                   VALUES (?,1,?,?,?,?,?)""",
+                (sid, original_rel, processed_rel, source, method, ts),
             )
             conn.execute(
                 "INSERT INTO audit_log (ts, actor, action, target, detail) VALUES (?,?,?,?,?)",
-                (ts, "admin", "create", pid, f"{name} ({source})"),
+                (ts, "admin", "create", pid, f"{name} ({source}, {method})"),
             )
             row = conn.execute(
                 "SELECT * FROM signatures WHERE id = ?", (sid,)).fetchone()
@@ -169,7 +187,8 @@ def create_signature(name: str, title: str, slug: str, source: str,
 def update_signature_version(pid: str, name: str | None, title: str | None,
                              source: str, original_rel: str,
                              processed_rel: str,
-                             slug: str | None = None) -> Optional[dict]:
+                             slug: str | None = None,
+                             method: str | None = None) -> Optional[dict]:
     """Upload versi baru utk pegawai existing. Versi lama di-archive + tercatat."""
     init_db()
     with _lock():
@@ -181,25 +200,28 @@ def update_signature_version(pid: str, name: str | None, title: str | None,
             ts = now_iso()
             new_ver = int(row["version"]) + 1
             new_slug = slug if slug is not None else row["slug"]
+            new_method = method if method is not None else row["method"]
             conn.execute(
                 """UPDATE signatures SET name = ?, title = ?, slug = ?,
                        version = ?, source = ?, original_rel = ?,
-                       processed_rel = ?, updated_at = ?
+                       processed_rel = ?, method = ?, updated_at = ?
                    WHERE pid = ?""",
                 (name if name is not None else row["name"],
                  title if title is not None else row["title"],
                  new_slug, new_ver, source,
-                 original_rel, processed_rel, ts, pid),
+                 original_rel, processed_rel, new_method, ts, pid),
             )
             conn.execute(
                 """INSERT INTO signature_versions
-                   (signature_id, version, original_rel, processed_rel, source, created_at)
-                   VALUES (?,?,?,?,?,?)""",
-                (row["id"], new_ver, original_rel, processed_rel, source, ts),
+                   (signature_id, version, original_rel, processed_rel, source, method, created_at)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (row["id"], new_ver, original_rel, processed_rel, source,
+                 new_method, ts),
             )
             conn.execute(
                 "INSERT INTO audit_log (ts, actor, action, target, detail) VALUES (?,?,?,?,?)",
-                (ts, "admin", "update", pid, f"v{new_ver} — {source}"),
+                (ts, "admin", "update", pid,
+                 f"v{new_ver} — {source} ({new_method})"),
             )
             row = conn.execute(
                 "SELECT * FROM signatures WHERE pid = ?", (pid,)).fetchone()
@@ -358,6 +380,7 @@ def build_cache() -> Path:
                 "original": r["original_rel"],
                 "status": r["status"],
                 "version": r["version"],
+                "method": r["method"],
                 "updated_at": r["updated_at"],
             }
     tmp = CACHE_PATH.with_suffix(".json.tmp")
@@ -385,6 +408,7 @@ def write_metadata(pid: str) -> None:
         "gelar": row["title"],
         "status": row["status"],
         "version": row["version"],
+        "method": row["method"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
         "sumber": row["source"],
