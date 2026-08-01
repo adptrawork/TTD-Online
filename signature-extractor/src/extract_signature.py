@@ -16,6 +16,34 @@ from crop_cells import _remove_grid_lines
 # feather radius untuk melembutkan tepi alpha (menghilangkan "halo" putih)
 FEATHER = 2
 
+# Upscale & sharpening: crop asli sangat kecil (~100px) karena scan 150 DPI,
+# sehingga tampil blur saat diperbesar di halaman verifier. Upscale 3x dengan
+# LANCZOS4 + unsharp mask membuat stroke lebih halus dan tajam.
+UPSCALE = 3
+SHARPEN_AMOUNT = 1.2
+SHARPEN_SIGMA = 1.5
+
+
+def upscale_sharpen(rgba: np.ndarray,
+                    factor: int = UPSCALE,
+                    amount: float = SHARPEN_AMOUNT,
+                    sigma: float = SHARPEN_SIGMA) -> np.ndarray:
+    """Upscale RGBA (LANCZOS4) lalu unsharp mask pada channel warna.
+
+    Alpha channel tidak di-sharpen (dipertahankan halus dari feather).
+    """
+    if factor <= 1:
+        return rgba
+    h, w = rgba.shape[:2]
+    up = cv2.resize(rgba, (w * factor, h * factor),
+                    interpolation=cv2.INTER_LANCZOS4)
+
+    rgb = up[:, :, :3].astype(np.float32)
+    blurred = cv2.GaussianBlur(rgb, (0, 0), sigmaX=sigma)
+    sharp = cv2.addWeighted(rgb, 1.0 + amount, blurred, -amount, 0)
+    up[:, :, :3] = np.clip(sharp, 0, 255).astype(np.uint8)
+    return up
+
 
 def signature_to_rgba(crop_bgr: np.ndarray,
                       feather: int = FEATHER) -> Optional[np.ndarray]:
@@ -52,7 +80,7 @@ def signature_to_rgba(crop_bgr: np.ndarray,
         a = mask
 
     rgba = cv2.merge([crop_bgr[:, :, 2], crop_bgr[:, :, 1], crop_bgr[:, :, 0], a])
-    return rgba
+    return upscale_sharpen(rgba)
 
 
 def save_rgba(rgba: np.ndarray, path: str | Path) -> None:
