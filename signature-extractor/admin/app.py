@@ -204,6 +204,7 @@ PAGE = """<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="static/css/jquery.dataTables.min.css">
 <style>
 @font-face{font-family:'Dancing Script';src:url('static/fonts/DancingScript.ttf') format('truetype')}
 @font-face{font-family:'Great Vibes';src:url('static/fonts/GreatVibes-Regular.ttf') format('truetype')}
@@ -313,6 +314,39 @@ min-height:96px;display:grid;place-items:center;padding:1rem;overflow:hidden}
 .type-prev span{color:var(--ink);line-height:1.2;text-align:center;word-break:break-word}
 input[type=range]{accent-color:var(--accent)}
 .hint{font-size:.7rem;color:var(--ink3);margin-top:.25rem}
+/* ---- DataTables ---- */
+table.dataTable{font-family:var(--font);border-collapse:separate;border-spacing:0;
+width:100%!important}
+table.dataTable thead th{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;
+color:var(--ink3);font-weight:700;border-bottom:2px solid var(--border);
+padding:.65rem .7rem}
+table.dataTable thead th.sorting_asc,table.dataTable thead th.sorting_desc{color:var(--accent-ink)}
+table.dataTable thead .sorting:after,table.dataTable thead .sorting_asc:after,
+table.dataTable thead .sorting_desc:after{opacity:.45}
+table.dataTable td{font-size:.82rem;padding:.6rem .7rem;border-bottom:1px solid
+rgba(226,232,240,.55);vertical-align:middle}
+table.dataTable tbody tr:hover{background:var(--accent-soft)}
+table.dataTable tbody tr.even{background:rgba(249,250,251,.6)}
+table.dataTable.row-border tbody th,table.dataTable.row-border tbody td,table.dataTable.display tbody th,table.dataTable.display tbody td{border-top:1px solid rgba(226,232,240,.4)}
+table.dataTable.stripe tbody tr.odd,table.dataTable.display tbody tr.odd{background:transparent}
+.dataTables_wrapper{font-family:var(--font)}
+.dataTables_wrapper .dataTables_filter input,.dataTables_wrapper .dataTables_length select{
+font-family:var(--font);font-size:.8rem;padding:.42rem .65rem;border:1px solid var(--border);
+border-radius:.6rem;background:#fcfdfc;color:var(--ink);outline:none;margin-left:.4rem;
+transition:border-color .2s}
+.dataTables_wrapper .dataTables_filter input:focus,.dataTables_wrapper .dataTables_length select:focus{border-color:var(--accent)}
+.dataTables_wrapper .dataTables_filter label,.dataTables_wrapper .dataTables_length label{font-size:.8rem;color:var(--ink2)}
+.dataTables_wrapper .dataTables_filter{color:var(--ink2)}
+.dataTables_wrapper .dataTables_info{font-size:.75rem;color:var(--ink3);padding-top:.7rem}
+.dataTables_wrapper .dataTables_paginate .paginate_button{font-size:.75rem;padding:.32rem .7rem;
+margin:0 .1rem;border:1px solid var(--border)!important;border-radius:.55rem!important;
+background:#fff!important;color:var(--ink2)!important;font-family:var(--font)}
+.dataTables_wrapper .dataTables_paginate .paginate_button:hover{background:var(--accent-soft)!important;
+border-color:var(--accent)!important;color:var(--accent-ink)!important}
+.dataTables_wrapper .dataTables_paginate .paginate_button.current{background:var(--ink)!important;
+border-color:var(--ink)!important;color:#fff!important}
+.dataTables_wrapper .dataTables_paginate .paginate_button.disabled{opacity:.4!important}
+.dataTables_wrapper .dataTables_scrollHead table.dataTable thead th{border-bottom:2px solid var(--border)}
 dialog{border:0;border-radius:1.25rem;box-shadow:0 25px 60px -15px rgba(15,23,42,.35);
 width:min(30rem,92vw);padding:1.5rem;font-family:var(--font);margin:auto;inset:0;
 max-height:90dvh;overflow:auto}
@@ -377,7 +411,7 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
   <h2>Arsip tanda tangan</h2>
   <p class="desc">Ganti gambar = versi baru (versi lama otomatis di-archive) — lewat
   tombol <b>edit</b>. Nonaktifkan = soft delete (tetap tersimpan, tidak ditampilkan publik).</p>
-  <table><thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Jenis</th><th>Versi</th>
+  <table id="tbl-list"><thead><tr><th>No</th><th>Nama</th><th>Status</th><th>Jenis</th><th>Versi</th>
   <th>QR</th><th>Tanda tangan</th><th>Aksi</th></tr></thead>
   <tbody id="tbody"></tbody></table>
 </div>
@@ -450,7 +484,7 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 <div class="card">
   <h2>Audit trail</h2>
   <p class="desc">Riwayat setiap aksi admin (create / edit / activate / deactivate / delete).</p>
-  <table><thead><tr><th>Waktu</th><th>Aksi</th><th>Target</th><th>Detail</th></tr></thead>
+  <table id="tbl-audit"><thead><tr><th>Waktu</th><th>Aksi</th><th>Target</th><th>Detail</th></tr></thead>
   <tbody id="auditBody"></tbody></table>
 </div>
 
@@ -464,6 +498,8 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
 </div>
 </div>
 
+<script src="static/js/jquery.min.js"></script>
+<script src="static/js/jquery.dataTables.min.js"></script>
 <script src="static/js/signature_pad.min.js"></script>
 <script>
 // BASE otomatis dari path halaman (mis. /ttd-admin saat diakses lewat nginx,
@@ -834,7 +870,52 @@ async function saveEdit() {
   loadList(); loadAudit(); loadLogs();
 }
 
+function initListTable() {
+  if ($.fn.DataTable.isDataTable("#tbl-list")) {
+    $("#tbl-list").DataTable().destroy();
+  }
+  $("#tbl-list").DataTable({
+    pageLength: 25,
+    lengthMenu: [[10, 25, 50, 100, -1], [10, 25, 50, 100, "Semua"]],
+    order: [[0, "asc"]],
+    columnDefs: [{ orderable: false, targets: [5, 6, 7] }],
+    language: {
+      search: "Cari:",
+      lengthMenu: "Tampilkan _MENU_ baris",
+      info: "Menampilkan _START_–_END_ dari _TOTAL_ entri",
+      infoEmpty: "Tidak ada data",
+      infoFiltered: "(disaring dari _MAX_ total)",
+      zeroRecords: "Tidak ditemukan",
+      emptyTable: "Belum ada data",
+      paginate: { first: "«", last: "»", next: "›", previous: "‹" },
+      loadingRecords: "Memuat…"
+    }
+  });
+}
+function initAuditTable() {
+  if ($.fn.DataTable.isDataTable("#tbl-audit")) {
+    $("#tbl-audit").DataTable().destroy();
+  }
+  $("#tbl-audit").DataTable({
+    pageLength: 10,
+    lengthMenu: [[10, 25, 50, 100], [10, 25, 50, 100]],
+    order: [[0, "desc"]],
+    language: {
+      search: "Cari:",
+      lengthMenu: "Tampilkan _MENU_ baris",
+      info: "Menampilkan _START_–_END_ dari _TOTAL_ entri",
+      infoEmpty: "Tidak ada data",
+      infoFiltered: "(disaring dari _MAX_ total)",
+      zeroRecords: "Tidak ditemukan",
+      paginate: { first: "«", last: "»", next: "›", previous: "‹" }
+    }
+  });
+}
 async function loadList() {
+  // destroy instance DataTables lama SEBELUM menimpa innerHTML
+  if ($.fn.DataTable.isDataTable("#tbl-list")) {
+    $("#tbl-list").DataTable().destroy();
+  }
   const r = await fetch(BASE + "/api/list");
   const d = await r.json();
   const active = d.filter(p => p.status === "active").length;
@@ -863,9 +944,14 @@ async function loadList() {
       <button class="btn-mini b-del" onclick="del('${p.pid}', '${esc(p.nama_display)}')">hapus</button>
     </td></tr>`;
   }).join("");
+  initListTable();
 }
 
 async function loadAudit() {
+  // destroy instance DataTables lama SEBELUM menimpa innerHTML
+  if ($.fn.DataTable.isDataTable("#tbl-audit")) {
+    $("#tbl-audit").DataTable().destroy();
+  }
   const r = await fetch(BASE + "/api/audit?limit=30");
   const d = await r.json();
   const tb = document.getElementById("auditBody");
@@ -874,6 +960,7 @@ async function loadAudit() {
     <td style="font-family:var(--mono);font-size:.72rem">${esc(a.action)}</td>
     <td style="font-family:var(--mono);font-size:.72rem;color:var(--accent-ink)">${esc(a.target)}</td>
     <td style="color:var(--ink2);font-size:.8rem">${esc(a.detail)}</td></tr>`).join("");
+  initAuditTable();
 }
 
 async function loadLogs() {
@@ -1265,18 +1352,25 @@ FONTS_DIR = Path(__file__).resolve().parent / "fonts"
 
 @app.get("/static/{kind}/{name}")
 def static_file(kind: str, name: str) -> Response:
-    """Serve file statis: /static/js/<file> dan /static/fonts/<file>.
+    """Serve file statis: /static/js/<file>, /static/css/<file>, /static/fonts/<file>.
 
     Hanya mengizinkan nama file dasar (tanpa path traversal) dari folder
     yang sudah ditentukan.
     """
     if "/" in name or "\\" in name or name in ("", ".", ".."):
         raise HTTPException(400, "nama file tidak valid")
-    base = STATIC_DIR / "js" if kind == "js" else (FONTS_DIR if kind == "fonts" else None)
-    if base is None:
+    if kind == "js":
+        base = STATIC_DIR / "js"
+        media = "application/javascript"
+    elif kind == "css":
+        base = STATIC_DIR / "css"
+        media = "text/css"
+    elif kind == "fonts":
+        base = FONTS_DIR
+        media = "font/ttf"
+    else:
         raise HTTPException(404, "folder statis tidak dikenal")
     path = base / name
     if not path.exists() or not path.is_file():
         raise HTTPException(404, "file tidak ditemukan")
-    media = "application/javascript" if kind == "js" else "font/ttf"
     return Response(path.read_bytes(), media_type=media)
