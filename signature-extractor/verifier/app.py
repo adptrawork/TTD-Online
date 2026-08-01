@@ -272,7 +272,7 @@ def verifikasi(payload_id: str) -> str:
     {f'<div class="gelar">{html.escape(gelar)}</div>' if gelar else ''}
   </div>
   <div class="sig">
-    <img src="/v/{html.escape(payload_id)}/img" alt="Citra tanda tangan {html.escape(nama)}">
+    <img src="{html.escape(payload_id)}/img" alt="Citra tanda tangan {html.escape(nama)}">
     <span class="sig-label">Tanda tangan digital</span>
   </div>
   <div class="meta">
