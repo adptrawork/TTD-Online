@@ -48,7 +48,8 @@ from process import process_image, png_size
 from db import (_lock, build_cache, connect, create_signature, delete_signature,
                 ensure_folders, get_audit, get_signature, get_versions,
                 list_signatures, rel_signature, set_status,
-                update_signature_version, write_metadata, signature_dir)
+                update_profile, update_signature_version, write_metadata,
+                signature_dir)
 
 PUBLIC_BASE_URL = os.environ.get(
     "PUBLIC_BASE_URL", "http://dev.rsudkotajambi.id/ttd").rstrip("/")
@@ -234,6 +235,22 @@ cursor:pointer;font-family:var(--font);font-weight:600;transition:opacity .2s}
 .b-on:hover{opacity:.85}
 .b-del{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
 .b-del:hover{background:#fee2e2}
+.b-edit{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}
+.b-edit:hover{background:#dbeafe}
+dialog{border:0;border-radius:1.25rem;box-shadow:0 25px 60px -15px rgba(15,23,42,.35);
+width:min(30rem,92vw);padding:1.5rem;font-family:var(--font)}
+dialog::backdrop{background:rgba(15,23,42,.45);backdrop-filter:blur(2px)}
+dialog h3{font-size:1.05rem;font-weight:700;margin-bottom:.2rem}
+dialog .e-pid{font-family:var(--mono);font-size:.7rem;color:var(--ink3);margin-bottom:1rem}
+dialog .fld{display:grid;gap:.35rem;margin-bottom:.9rem}
+dialog .fld label{font-size:.78rem;font-weight:600;color:var(--ink2)}
+dialog .fld input[type=text]{font-family:var(--font);font-size:.9rem;padding:.65rem .85rem;
+border:1px solid var(--border);border-radius:.75rem;background:#fcfdfc;color:var(--ink);
+outline:none;transition:border-color .2s}
+dialog .fld input[type=text]:focus{border-color:var(--accent)}
+dialog .fld input[type=file]{font-size:.8rem;color:var(--ink2)}
+dialog .dacts{display:flex;gap:.6rem;justify-content:flex-end;margin-top:1.25rem}
+.e-hint{font-size:.72rem;color:var(--ink3);line-height:1.4}
 table{width:100%;border-collapse:collapse;font-size:.85rem}
 th{font-family:var(--mono);font-size:.62rem;letter-spacing:.14em;text-transform:uppercase;
 color:var(--ink3);text-align:left;padding:.5rem .75rem;border-bottom:1px solid var(--border)}
@@ -289,9 +306,26 @@ display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap
   <tbody id="tbody"></tbody></table>
 </div>
 
+<dialog id="editDlg">
+  <h3>Edit pegawai</h3>
+  <div class="e-pid" id="editPid">—</div>
+  <div class="fld"><label for="editNama">Nama lengkap *</label>
+    <input type="text" id="editNama" placeholder="Nama pegawai"></div>
+  <div class="fld"><label for="editGelar">Gelar (opsional)</label>
+    <input type="text" id="editGelar" placeholder="mis. S.Kep, Ns"></div>
+  <div class="fld"><label for="editFile">Ganti gambar TTD (opsional)</label>
+    <input type="file" id="editFile" accept="image/*">
+    <span class="e-hint">Kosongkan jika hanya mengubah nama/gelar. Jika diisi,
+    gambar lama di-archive dan versi baru dibuat (nomor versi bertambah).</span></div>
+  <div class="dacts">
+    <button class="btn btn-ghost" onclick="document.getElementById('editDlg').close()">Batal</button>
+    <button class="btn btn-primary" id="editSave" onclick="saveEdit()">Simpan</button>
+  </div>
+</dialog>
+
 <div class="card">
   <h2>Audit trail</h2>
-  <p class="desc">Riwayat setiap aksi admin (create / update / activate / deactivate).</p>
+  <p class="desc">Riwayat setiap aksi admin (create / edit / update / activate / deactivate).</p>
   <table><thead><tr><th>Waktu</th><th>Aksi</th><th>Target</th><th>Detail</th></tr></thead>
   <tbody id="auditBody"></tbody></table>
 </div>
@@ -381,6 +415,47 @@ async function del(pid, nama) {
   else alert("Gagal hapus: " + (r.detail || r.error || "?"));
 }
 
+let editPid = null;
+async function editRow(pid) {
+  const r = await fetch(`${BASE}/api/list`);
+  const d = await r.json();
+  const p = d.find(x => x.pid === pid);
+  if (!p) return alert("Data tidak ditemukan");
+  editPid = pid;
+  document.getElementById("editPid").textContent = pid + " · v" + p.version +
+    (p.status === "active" ? "" : " · nonaktif");
+  document.getElementById("editNama").value = p.nama_display;
+  document.getElementById("editGelar").value = p.gelar || "";
+  document.getElementById("editFile").value = "";
+  document.getElementById("editSave").disabled = false;
+  document.getElementById("editSave").textContent = "Simpan";
+  document.getElementById("editDlg").showModal();
+  document.getElementById("editNama").focus();
+}
+
+async function saveEdit() {
+  const nama = document.getElementById("editNama").value.trim();
+  const gelar = document.getElementById("editGelar").value.trim();
+  const file = document.getElementById("editFile").files[0];
+  if (!nama) return alert("Nama tidak boleh kosong");
+  const btn = document.getElementById("editSave");
+  btn.disabled = true; btn.textContent = "Menyimpan…";
+  const fd = new FormData();
+  fd.append("nama", nama);
+  fd.append("gelar", gelar);
+  if (file) fd.append("file", file);
+  const res = await fetch(`${BASE}/api/${editPid}/edit`, { method:"POST", body: fd });
+  const r = await res.json();
+  btn.disabled = false; btn.textContent = "Simpan";
+  if (!r.ok) return alert("Gagal: " + (r.error || r.detail || "?"));
+  document.getElementById("editDlg").close();
+  alert(r.image_changed
+    ? `${editPid} → v${r.version} OK (nama/gelar + gambar baru)`
+    : `${editPid} OK (nama/gelar diubah)`);
+  editPid = null;
+  loadList(); loadAudit(); loadLogs();
+}
+
 function updRow(pid) {
   const tr = document.getElementById("tr-" + pid);
   const file = tr.querySelector(".upd-file");
@@ -420,6 +495,7 @@ async function loadList() {
     <td><a class="pill" href="${BASE}/api/${p.pid}/img" target="_blank">lihat</a></td>
     <td style="white-space:nowrap">
       <span class="upd-file"><input type="file" accept="image/*" onchange="upd('${p.pid}', this)"></span>
+      <button class="btn-mini b-edit" onclick="editRow('${p.pid}')">edit</button>
       <button class="btn-mini b-up" onclick="updRow('${p.pid}')">update</button>
       ${p.status === 'active'
         ? `<button class="btn-mini b-off" onclick="act('${p.pid}','deactivate')">nonaktifkan</button>`
@@ -608,6 +684,77 @@ async def api_update(pid: str, file: UploadFile = File(...)) -> dict:
         raise
     except Exception as exc:
         log.error("UPDATE GAGAL %s | %s\n%s", pid, exc, traceback.format_exc())
+        return {"ok": False, "error": str(exc)}
+
+
+@app.post("/api/{pid}/edit")
+async def api_edit(pid: str,
+                   nama: str = Form(...),
+                   gelar: str = Form(default=""),
+                   file: UploadFile | None = File(default=None)) -> dict:
+    """Edit metadata (nama + gelar). Jika file ikut dikirim -> upload versi baru
+    sekaligus mengganti nama/gelar (versi lama tetap di-archive)."""
+    row = get_signature(pid)
+    if row is None:
+        raise HTTPException(404, "pid tidak ditemukan")
+    nama = nama.strip()
+    if not nama:
+        raise HTTPException(422, "nama tidak boleh kosong")
+    gelar = gelar.strip()
+    try:
+        if file is not None and (file.filename or "").strip():
+            # ---- edit + ganti gambar: versi baru ----
+            raw = await file.read()
+            if not raw:
+                raise ValueError("file kosong")
+            png = process_image(raw)
+            if png is None:
+                raise ValueError("tidak terdeteksi tinta / format tidak dikenali")
+
+            orig_name = file.filename or "upload.jpg"
+            ext = orig_name.rsplit(".", 1)[-1].lower() if "." in orig_name else "jpg"
+            if ext not in ("jpg", "jpeg", "png"):
+                ext = "jpg"
+
+            old_ver = row["version"]
+            archive_previous(pid, old_ver)
+            updated = update_signature_version(
+                pid, name=nama, title=gelar, source=orig_name,
+                original_rel="", processed_rel="", slug=slugify(nama))
+            if updated is None:
+                raise HTTPException(500, "gagal memperbarui versi")
+            paths = store_upload(pid, png, raw, ext, orig_name)
+            new_ver = updated["version"]
+            with _lock():
+                with connect() as conn:
+                    conn.execute(
+                        "UPDATE signatures SET original_rel=?, processed_rel=? WHERE pid=?",
+                        (paths["original"], paths["processed"], pid))
+                    conn.execute(
+                        "UPDATE signature_versions SET original_rel=?, processed_rel=? "
+                        "WHERE signature_id=? AND version=?",
+                        (paths["original"], paths["processed"], updated["id"], new_ver))
+            write_full_metadata(pid)
+            build_cache()
+            w, h = png_size(png)
+            log.info("EDIT+UPLOAD %s -> v%d | %s | %dx%d | src=%s",
+                     pid, new_ver, nama, w, h, orig_name)
+            return {"ok": True, "pid": pid, "version": new_ver, "w": w, "h": h,
+                    "url": f"{PUBLIC_BASE_URL}/v/{pid}", "image_changed": True}
+
+        # ---- edit metadata saja (nama + gelar) ----
+        updated = update_profile(pid, nama, gelar, slugify(nama))
+        if updated is None:
+            raise HTTPException(500, "gagal memperbarui profil")
+        write_full_metadata(pid)
+        build_cache()
+        log.info("EDIT %s | %s | gelar: %s", pid, nama, gelar)
+        return {"ok": True, "pid": pid, "version": updated["version"],
+                "url": f"{PUBLIC_BASE_URL}/v/{pid}", "image_changed": False}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("EDIT GAGAL %s | %s\n%s", pid, exc, traceback.format_exc())
         return {"ok": False, "error": str(exc)}
 
 

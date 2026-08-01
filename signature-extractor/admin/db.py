@@ -168,7 +168,8 @@ def create_signature(name: str, title: str, slug: str, source: str,
 
 def update_signature_version(pid: str, name: str | None, title: str | None,
                              source: str, original_rel: str,
-                             processed_rel: str) -> Optional[dict]:
+                             processed_rel: str,
+                             slug: str | None = None) -> Optional[dict]:
     """Upload versi baru utk pegawai existing. Versi lama di-archive + tercatat."""
     init_db()
     with _lock():
@@ -179,6 +180,7 @@ def update_signature_version(pid: str, name: str | None, title: str | None,
                 return None
             ts = now_iso()
             new_ver = int(row["version"]) + 1
+            new_slug = slug if slug is not None else row["slug"]
             conn.execute(
                 """UPDATE signatures SET name = ?, title = ?, slug = ?,
                        version = ?, source = ?, original_rel = ?,
@@ -186,7 +188,7 @@ def update_signature_version(pid: str, name: str | None, title: str | None,
                    WHERE pid = ?""",
                 (name if name is not None else row["name"],
                  title if title is not None else row["title"],
-                 row["slug"], new_ver, source,
+                 new_slug, new_ver, source,
                  original_rel, processed_rel, ts, pid),
             )
             conn.execute(
@@ -221,6 +223,37 @@ def set_status(pid: str, status: str) -> Optional[dict]:
             conn.execute(
                 "INSERT INTO audit_log (ts, actor, action, target, detail) VALUES (?,?,?,?,?)",
                 (ts, "admin", status, pid, ""),
+            )
+            row = conn.execute(
+                "SELECT * FROM signatures WHERE pid = ?", (pid,)).fetchone()
+            return _row_to_dict(row)
+
+
+def update_profile(pid: str, name: str, title: str, slug: str) -> Optional[dict]:
+    """Edit metadata pegawai (nama + gelar). TIDAK menambah versi gambar.
+
+    Folder & pid tidak berubah (folder berbasis pid), sehingga QR lama tetap
+    valid. Perubahan dicatat di audit_log dengan detail lama -> baru.
+    """
+    init_db()
+    with _lock():
+        with connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM signatures WHERE pid = ?", (pid,)).fetchone()
+            if row is None:
+                return None
+            ts = now_iso()
+            detail = f"{row['name']} -> {name}"
+            if row["title"] != title:
+                detail += f" | gelar: {row['title'] or '-'} -> {title or '-'}"
+            conn.execute(
+                """UPDATE signatures SET name = ?, title = ?, slug = ?,
+                       updated_at = ? WHERE pid = ?""",
+                (name, title, slug, ts, pid),
+            )
+            conn.execute(
+                "INSERT INTO audit_log (ts, actor, action, target, detail) VALUES (?,?,?,?,?)",
+                (ts, "admin", "edit", pid, detail),
             )
             row = conn.execute(
                 "SELECT * FROM signatures WHERE pid = ?", (pid,)).fetchone()
